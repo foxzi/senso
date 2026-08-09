@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"senso/internal/dbpath"
 	"senso/internal/i18n"
@@ -66,25 +65,31 @@ func shortenPath(abs, cwd string) string {
 	return rel
 }
 
-// snippet схлопывает переводы строк и повторяющиеся пробелы в s в один
-// пробел и обрезает результат по рунам до maxRunes символов, добавляя
-// многоточие при обрезке.
-func snippet(s string, maxRunes int) string {
-	collapsed := strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(collapsed) <= maxRunes {
-		return collapsed
-	}
-	runes := []rune(collapsed)
-	return string(runes[:maxRunes]) + "..."
+// errIndexNotFound - ошибка «индекс не найден», единая для случая, когда
+// .senso не найдена поиском вверх по дереву, и для случая, когда указанный
+// явно файл базы не существует.
+func errIndexNotFound() error {
+	return errors.New(i18n.T("index not found: run senso index <path>", "индекс не найден: запустите senso index <путь>"))
 }
 
 // openStore находит и открывает базу данных senso по флагу --db.
 // Возвращает открытый стор и путь к файлу базы.
+//
+// Существование файла проверяется до store.Open: драйвер SQLite создаёт файл
+// базы при первом же обращении, поэтому без этой проверки читающая команда с
+// опечаткой в --db молча создавала бы пустую базу и падала бы потом на
+// отсутствующей таблице вместо понятного «индекс не найден».
 func openStore(flagDB string) (*store.Store, string, error) {
 	path, err := dbpath.Find(flagDB)
 	if err != nil {
 		if errors.Is(err, dbpath.ErrNotFound) {
-			return nil, "", errors.New(i18n.T("index not found: run senso index <path>", "индекс не найден: запустите senso index <путь>"))
+			return nil, "", errIndexNotFound()
+		}
+		return nil, "", err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", errIndexNotFound()
 		}
 		return nil, "", err
 	}
