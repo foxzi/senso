@@ -239,6 +239,9 @@ func RunIndex(args []string) error {
 		if err := s.SetIndexedAt(time.Now()); err != nil {
 			return err
 		}
+		if err := s.AddRoot(root); err != nil {
+			return err
+		}
 	}
 
 	if !opts.Quiet {

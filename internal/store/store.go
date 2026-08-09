@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -222,6 +223,91 @@ func (s *Store) GetMeta(key string) (string, error) {
 		return "", fmt.Errorf(i18n.T("store: read meta.%s: %w", "store: чтение meta.%s: %w"), key, err)
 	}
 	return value, nil
+}
+
+// rootsMetaKey - ключ в meta, под которым хранится JSON-массив абсолютных
+// путей всех корней, когда-либо проиндексированных в эту базу. Отдельного
+// ключа заведомо достаточно: схему менять нельзя (см. schemaVersion), а
+// meta - готовое хранилище ключ/значение.
+const rootsMetaKey = "roots"
+
+// Roots возвращает список абсолютных путей всех корней, зарегистрированных
+// в этой базе через AddRoot. Для баз, созданных до появления meta.roots,
+// возвращается список из одного элемента - значения meta.root; если и его
+// нет, возвращается пустой список без ошибки.
+func (s *Store) Roots() ([]string, error) {
+	raw, err := s.GetMeta(rootsMetaKey)
+	if err != nil {
+		return nil, err
+	}
+	if raw != "" {
+		var roots []string
+		if err := json.Unmarshal([]byte(raw), &roots); err != nil {
+			return nil, fmt.Errorf(i18n.T("store: parse meta.roots: %w", "store: разбор meta.roots: %w"), err)
+		}
+		return roots, nil
+	}
+
+	// Старая база без meta.roots - единственный известный корень лежит в
+	// meta.root (его пишет Init при создании схемы).
+	root, err := s.GetMeta("root")
+	if err != nil {
+		return nil, err
+	}
+	if root == "" {
+		return []string{}, nil
+	}
+	return []string{root}, nil
+}
+
+// AddRoot регистрирует абсолютный путь root в списке проиндексированных
+// корней базы (meta.roots). Если root уже покрыт одним из записанных
+// корней (совпадает с ним или вложен в него), список не меняется. Если
+// root, наоборот, является предком уже записанных корней, эти вложенные
+// корни поглощаются им и убираются из списка - индексация родителя
+// покрывает и их. Повторный вызов с тем же root не создаёт дублей.
+func (s *Store) AddRoot(root string) error {
+	root = filepath.Clean(root)
+
+	roots, err := s.Roots()
+	if err != nil {
+		return err
+	}
+
+	for _, r := range roots {
+		if pathInSubtree(root, r) {
+			return nil
+		}
+	}
+
+	var updated []string
+	for _, r := range roots {
+		if pathInSubtree(r, root) {
+			// r вложен в новый root - поглощается им.
+			continue
+		}
+		updated = append(updated, r)
+	}
+	updated = append(updated, root)
+
+	data, err := json.Marshal(updated)
+	if err != nil {
+		return err
+	}
+	return s.SetMeta(rootsMetaKey, string(data))
+}
+
+// pathInSubtree сообщает, лежит ли path внутри поддерева root (или равен
+// ему). Сравнение идёт по границам сегментов пути, поэтому "/a/bc" не
+// считается вложенным в "/a/b". По смыслу совпадает с cli.prefixInSubtree,
+// но продублирована здесь, чтобы store не зависел от cli.
+func pathInSubtree(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 // execer - минимальный интерфейс для выполнения DDL/DML, реализуемый и
@@ -675,8 +761,9 @@ type Stats struct {
 	Dim       int
 	Root      string
 	IndexedAt string
-	// Roots - количество файлов по корневым директориям: сам Root и
-	// директории верхнего уровня внутри него, отличающиеся от Root.
+	// Roots - количество файлов по зарегистрированным корням базы
+	// (см. AddRoot/Roots); файлы, не попавшие ни в один корень, считаются
+	// отдельным ключом.
 	Roots map[string]int
 	// FTSRows - число строк в лексическом индексе fts_chunks.
 	FTSRows int
@@ -708,7 +795,7 @@ func (s *Store) Stats() (Stats, error) {
 		return st, err
 	}
 
-	st.Roots, err = s.rootCounts(st.Root)
+	st.Roots, err = s.rootCounts()
 	if err != nil {
 		return st, err
 	}
@@ -730,27 +817,52 @@ func (s *Store) Stats() (Stats, error) {
 	return st, nil
 }
 
-// rootCounts группирует количество файлов по root и по директориям
-// верхнего уровня внутри root, отличающимся от него.
-func (s *Store) rootCounts(root string) (map[string]int, error) {
+// rootCounts группирует количество файлов по зарегистрированным корням
+// (meta.roots). Каждый путь относится к самому специфичному (самому
+// длинному) из корней, в поддерево которого он попадает - это разруливает
+// случай вложенных корней. Пути, не попавшие ни в один зарегистрированный
+// корень (возможно у старых баз с неполным meta.roots), группируются под
+// отдельным ключом, а не молча приписываются чужому корню.
+func (s *Store) rootCounts() (map[string]int, error) {
+	roots, err := s.Roots()
+	if err != nil {
+		return nil, err
+	}
+
 	paths, err := s.ListPaths("")
 	if err != nil {
 		return nil, err
 	}
 
+	otherKey := i18n.T("(other)", "(прочее)")
+
 	counts := make(map[string]int)
 	for _, p := range paths {
-		key := root
-		rel, err := filepath.Rel(root, p)
-		if err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			parts := strings.SplitN(filepath.ToSlash(rel), "/", 2)
-			if len(parts) == 2 {
-				key = filepath.Join(root, parts[0])
-			}
+		key, ok := bestRoot(p, roots)
+		if !ok {
+			key = otherKey
 		}
 		counts[key]++
 	}
 	return counts, nil
+}
+
+// bestRoot ищет среди roots самый специфичный (самый длинный по строке)
+// корень, в поддерево которого входит path. Возвращает false, если ни один
+// корень не подошёл.
+func bestRoot(path string, roots []string) (string, bool) {
+	best := ""
+	found := false
+	for _, r := range roots {
+		if !pathInSubtree(path, r) {
+			continue
+		}
+		if !found || len(r) > len(best) {
+			best = r
+			found = true
+		}
+	}
+	return best, found
 }
 
 // SetIndexedAt записывает время последней успешной индексации в meta.
