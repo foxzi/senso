@@ -186,4 +186,3 @@ func TestSplitLineNumbersOnFixedInput(t *testing.T) {
 		}
 	}
 }
-
