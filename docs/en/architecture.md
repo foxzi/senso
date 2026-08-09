@@ -39,6 +39,13 @@
 - **`internal/cli`** — implementation of the subcommands (`index`,
   `search`, `status`, `rm`): flag parsing, incremental re-index decisions,
   human-readable and JSON output formatting.
+- **`internal/i18n`** — picks the language of human-readable output
+  (`Detect` reads `SENSO_LANG`/`LC_ALL`/`LC_MESSAGES`/`LANG`, `Set`
+  applies it at startup, `T`/`Tf` pick and format a string). There is no
+  catalog of translation keys: (en, ru) string pairs live right next to
+  the code that uses them. The JSON format (`--json`) does not depend on
+  the output language — this is intentional, machine-readable values are
+  always the same.
 
 There is no separate `cmd` layer — `main.go` at the module root is a thin
 entry point: it parses the subcommand name, calls the matching `cli.Run*`

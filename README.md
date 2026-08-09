@@ -25,6 +25,9 @@ predictable exit codes.
 - Index is stored in a hidden `.senso` directory, found automatically by
   walking up the directory tree (like `.git`).
 - JSON output for `search` and `status`, convenient for scripting and agents.
+- Output is English by default; it switches to Russian based on the
+  `SENSO_LANG`/`LC_ALL`/`LC_MESSAGES`/`LANG` locale, or `SENSO_LANG`
+  explicitly (JSON output is unaffected).
 
 ## Requirements
 

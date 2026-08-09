@@ -44,6 +44,36 @@ The database file path is resolved with this priority (see
 `search`, `status` and `rm` never create the database — if it is not
 found, they fail with exit code 1.
 
+## Output language
+
+The language of human-readable output is determined from environment
+variables in this order of priority: `SENSO_LANG`, `LC_ALL`,
+`LC_MESSAGES`, `LANG`. The first non-empty variable decides the outcome:
+if its value starts with `ru` (case-insensitive), output is Russian,
+otherwise English; the values `C` and `POSIX` are treated as English. If
+none of the variables is set, output is English (the default language).
+
+`SENSO_LANG` is an explicit override and takes precedence over the system
+locale in both directions: `SENSO_LANG=en` gives English output on a
+Russian machine, `SENSO_LANG=ru` gives Russian output on an English one.
+
+Localized: the general help (`senso help`), flag descriptions for every
+subcommand, error messages, and the labels in the human-readable output
+of `status` and `index`.
+
+The JSON format (`--json` for `search` and `status`) does **not** depend
+on the locale: keys and machine-readable values are identical in any
+locale — for example, the `mode` field always stays `lexical` or
+`lexical+semantic` and is never translated. This is intentional, so
+scripts do not break when the locale changes.
+
+Examples:
+
+```sh
+SENSO_LANG=en senso status   # English output regardless of the OS locale
+SENSO_LANG=ru senso status   # Russian output regardless of the OS locale
+```
+
 ## Commands
 
 General form: `senso <command> [flags] [arguments]`. Running `senso` with
@@ -189,10 +219,10 @@ Flags:
 
 The `mode` field takes one of two machine-readable values: `lexical`
 (lexical index only) or `lexical+semantic` (the database also has
-vectors). The human-readable output shows the same information as
-`mode: только лексический` (lexical only) or
-`mode: лексический и семантический` (lexical and semantic) — that line
-stays in Russian, matching the rest of the human-readable output.
+vectors) — this JSON value is never translated. The human-readable output
+shows the same information as a localized `mode: lexical only` /
+`mode: lexical and semantic` line (English by default, Russian if the
+output language is Russian — see "Output language" above).
 
 ### `senso rm <path>`
 
