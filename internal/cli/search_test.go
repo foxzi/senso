@@ -134,7 +134,7 @@ func TestUniquePathsEmpty(t *testing.T) {
 }
 
 func TestFormatResultHeader(t *testing.T) {
-	got := formatResultHeader("docs/setup.md", 3, 0.182)
+	got := formatResultHeader("docs/setup.md", 3, 0, 0, 0.182)
 	want := "docs/setup.md#3  0.182"
 	if got != want {
 		t.Errorf("formatResultHeader = %q, ожидалось %q", got, want)
@@ -142,8 +142,16 @@ func TestFormatResultHeader(t *testing.T) {
 }
 
 func TestFormatResultHeaderRounding(t *testing.T) {
-	got := formatResultHeader("a.txt", 0, 0.1)
+	got := formatResultHeader("a.txt", 0, 0, 0, 0.1)
 	want := "a.txt#0  0.100"
+	if got != want {
+		t.Errorf("formatResultHeader = %q, ожидалось %q", got, want)
+	}
+}
+
+func TestFormatResultHeaderWithLineRange(t *testing.T) {
+	got := formatResultHeader("docs/setup.md", 3, 40, 58, 0.182)
+	want := "docs/setup.md#3  40-58  0.182"
 	if got != want {
 		t.Errorf("formatResultHeader = %q, ожидалось %q", got, want)
 	}

@@ -190,7 +190,7 @@ func RunIndex(args []string) error {
 			// во время обработки этого файла, он всё равно должен
 			// завершиться корректно, а прерывание случится перед
 			// следующим файлом.
-			vectors, err = embedAll(context.Background(), client, chunks, opts)
+			vectors, err = embedAll(context.Background(), client, chunkTexts(chunks), opts)
 			if err != nil {
 				return err
 			}
@@ -289,6 +289,16 @@ func pruneMissing(s *store.Store, root string) (int, error) {
 	}
 
 	return s.DeleteFiles(missing)
+}
+
+// chunkTexts извлекает текст из каждого чанка - embedAll работает с текстом,
+// а номера строк для эмбеддинга не нужны.
+func chunkTexts(chunks []chunk.Chunk) []string {
+	texts := make([]string, len(chunks))
+	for i, c := range chunks {
+		texts[i] = c.Text
+	}
+	return texts
 }
 
 // embedAll получает эмбеддинги для всех чанков одного файла: разбивает их

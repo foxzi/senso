@@ -162,28 +162,41 @@ func searchSemantic(s *store.Store, opts searchOptions) ([]store.Result, error) 
 // formatResultHeader форматирует заголовочную строку одного результата:
 // путь с номером чанка через "#" и показатель релевантности с тремя знаками
 // после запятой (больше - релевантнее).
-func formatResultHeader(path string, seq int, score float64) string {
-	return fmt.Sprintf("%s#%d  %.3f", path, seq, score)
+// путь с номером чанка через "#", диапазон строк исходного файла и
+// показатель релевантности с тремя знаками после запятой (больше -
+// релевантнее). Если startLine == 0 (данных о строках нет), диапазон не
+// печатается.
+func formatResultHeader(path string, seq, startLine, endLine int, score float64) string {
+	if startLine == 0 {
+		return fmt.Sprintf("%s#%d  %.3f", path, seq, score)
+	}
+	return fmt.Sprintf("%s#%d  %d-%d  %.3f", path, seq, startLine, endLine, score)
 }
 
 // printSearchText печатает результаты в человекочитаемом виде: путь
 // сокращается относительно текущей директории, текст обрезается окном
-// сниппета вокруг слова запроса.
+// сниппета вокруг слова запроса. Сниппет может быть многострочным, поэтому
+// отступ ставится перед каждой его строкой.
 func printSearchText(results []store.Result, query string, snippetLen int) {
 	cwd, _ := os.Getwd()
 	for _, r := range results {
 		path := shortenPath(r.Path, cwd)
-		fmt.Println(formatResultHeader(path, r.Seq, r.Score))
-		fmt.Printf("    %s\n", snippetAround(r.Text, query, snippetLen))
+		fmt.Println(formatResultHeader(path, r.Seq, r.StartLine, r.EndLine, r.Score))
+		snippet := snippetAround(r.Text, query, snippetLen)
+		for _, line := range strings.Split(snippet, "\n") {
+			fmt.Printf("    %s\n", line)
+		}
 	}
 }
 
 // searchResultJSON - структура одного результата для вывода в формате JSON.
 type searchResultJSON struct {
-	Path  string  `json:"path"`
-	Chunk int     `json:"chunk"`
-	Score float64 `json:"score"`
-	Text  string  `json:"text"`
+	Path      string  `json:"path"`
+	Chunk     int     `json:"chunk"`
+	StartLine int     `json:"line_start"`
+	EndLine   int     `json:"line_end"`
+	Score     float64 `json:"score"`
+	Text      string  `json:"text"`
 }
 
 // printSearchJSON печатает результаты как JSON-массив объектов.
@@ -193,10 +206,12 @@ func printSearchJSON(results []store.Result, query string, snippetLen int) error
 	out := make([]searchResultJSON, 0, len(results))
 	for _, r := range results {
 		out = append(out, searchResultJSON{
-			Path:  r.Path,
-			Chunk: r.Seq,
-			Score: r.Score,
-			Text:  snippetAround(r.Text, query, snippetLen),
+			Path:      r.Path,
+			Chunk:     r.Seq,
+			StartLine: r.StartLine,
+			EndLine:   r.EndLine,
+			Score:     r.Score,
+			Text:      snippetAround(r.Text, query, snippetLen),
 		})
 	}
 	data, err := json.MarshalIndent(out, "", "  ")

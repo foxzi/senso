@@ -6,15 +6,38 @@
 package chunk
 
 import (
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
 
+// Chunk - фрагмент документа вместе с диапазоном строк исходного файла,
+// который он покрывает. Строки нумеруются с единицы, EndLine включительна.
+//
+// Диапазон охватывает весь текст фрагмента, включая перекрытие с предыдущим
+// фрагментом: по нему можно открыть файл на нужном месте и увидеть ровно то,
+// что попало в индекс.
+type Chunk struct {
+	Text      string
+	StartLine int
+	EndLine   int
+}
+
 // unit - неделимый кусок текста, гарантированно не превышающий целевой размер,
-// вместе с разделителем, которым он присоединяется к предыдущему куску.
+// вместе с разделителем, которым он присоединяется к предыдущему куску,
+// и байтовым смещением в исходном тексте.
 type unit struct {
 	text string
 	sep  string
+	off  int
+}
+
+// span - собранный фрагмент вместе с полуинтервалом [off, end) байтовых
+// смещений в исходном тексте, из которого он склеен.
+type span struct {
+	text string
+	off  int
+	end  int
 }
 
 // Split разбивает текст на фрагменты длиной около size рун с перекрытием
@@ -30,7 +53,10 @@ type unit struct {
 // добавляется к уже собранному фрагменту, а не урезает его полезную часть.
 // Разделитель между хвостом и фрагментом учитывается внутри overlap.
 // Пустые и целиком пробельные фрагменты не возвращаются.
-func Split(text string, size, overlap int) []string {
+//
+// Каждый возвращённый Chunk несёт диапазон строк исходного text, который он
+// покрывает; диапазон включает и перекрытие с предыдущим фрагментом.
+func Split(text string, size, overlap int) []Chunk {
 	if size <= 0 {
 		return nil
 	}
@@ -45,13 +71,31 @@ func Split(text string, size, overlap int) []string {
 
 	units := splitUnits(text, size)
 	packed := pack(units, size)
-	return applyOverlap(packed, overlap)
+	spans := applyOverlap(packed, overlap)
+
+	nl := newlineOffsets(text)
+	chunks := make([]Chunk, len(spans))
+	for i, s := range spans {
+		end := s.end - 1
+		if end < s.off {
+			end = s.off
+		}
+		chunks[i] = Chunk{
+			Text:      s.text,
+			StartLine: lineAt(nl, s.off),
+			EndLine:   lineAt(nl, end),
+		}
+	}
+	return chunks
 }
 
 // splitUnits разбирает текст на куски, каждый из которых помещается в size.
 func splitUnits(text string, size int) []unit {
 	var units []unit
+	paraOff := 0
 	for i, para := range strings.Split(text, "\n\n") {
+		off := paraOff
+		paraOff += len(para) + 2
 		sep := "\n\n"
 		if i == 0 {
 			sep = ""
@@ -60,26 +104,31 @@ func splitUnits(text string, size int) []unit {
 			continue
 		}
 		if utf8.RuneCountInString(para) <= size {
-			units = append(units, unit{para, sep})
+			units = append(units, unit{para, sep, off})
 			continue
 		}
 		// Абзац не помещается целиком - опускаемся до строк.
+		lineOff := off
 		for j, line := range strings.Split(para, "\n") {
+			lo := lineOff
+			lineOff += len(line) + 1
 			lineSep := "\n"
 			if j == 0 {
 				lineSep = sep
 			}
 			if utf8.RuneCountInString(line) <= size {
-				units = append(units, unit{line, lineSep})
+				units = append(units, unit{line, lineSep, lo})
 				continue
 			}
 			// И строка не помещается - режем по счётчику рун.
+			pieceOff := lo
 			for k, piece := range hardSplit(line, size) {
 				pieceSep := ""
 				if k == 0 {
 					pieceSep = lineSep
 				}
-				units = append(units, unit{piece, pieceSep})
+				units = append(units, unit{piece, pieceSep, pieceOff})
+				pieceOff += len(piece)
 			}
 		}
 	}
@@ -107,14 +156,16 @@ func hardSplit(s string, size int) []string {
 }
 
 // pack жадно склеивает куски, пока результат помещается в size.
-func pack(units []unit, size int) []string {
-	var out []string
+func pack(units []unit, size int) []span {
+	var out []span
 	var cur strings.Builder
 	curLen := 0
+	curOff := 0
+	curEnd := 0
 
 	flush := func() {
 		if strings.TrimSpace(cur.String()) != "" {
-			out = append(out, cur.String())
+			out = append(out, span{cur.String(), curOff, curEnd})
 		}
 		cur.Reset()
 		curLen = 0
@@ -125,16 +176,19 @@ func pack(units []unit, size int) []string {
 		sep := u.sep
 		if curLen == 0 {
 			sep = ""
+			curOff = u.off
 		}
 		sepLen := utf8.RuneCountInString(sep)
 
 		if curLen > 0 && curLen+sepLen+uLen > size {
 			flush()
 			sep, sepLen = "", 0
+			curOff = u.off
 		}
 		cur.WriteString(sep)
 		cur.WriteString(u.text)
 		curLen += sepLen + uLen
+		curEnd = u.off + len(u.text)
 	}
 	flush()
 	return out
@@ -144,24 +198,32 @@ func pack(units []unit, size int) []string {
 //
 // Перекрытие нужно, чтобы мысль, оказавшаяся на стыке двух фрагментов,
 // целиком присутствовала хотя бы в одном из них и была найдена поиском.
-func applyOverlap(chunks []string, overlap int) []string {
+func applyOverlap(spans []span, overlap int) []span {
 	// Перекрытие в одну руну не переносит смысла, а разделитель уже занял бы
 	// весь бюджет, поэтому такой случай приравнивается к его отсутствию.
-	if overlap < 2 || len(chunks) < 2 {
-		return chunks
+	if overlap < 2 || len(spans) < 2 {
+		return spans
 	}
 	// Перевод строки, склеивающий хвост с фрагментом, входит в бюджет
 	// перекрытия: иначе фрагмент оказался бы длиннее объявленного предела.
 	tailLen := overlap - 1
-	out := make([]string, 0, len(chunks))
-	out = append(out, chunks[0])
-	for i := 1; i < len(chunks); i++ {
-		tail := lastRunes(chunks[i-1], tailLen)
+	out := make([]span, 0, len(spans))
+	out = append(out, spans[0])
+	for i := 1; i < len(spans); i++ {
+		tail := lastRunes(spans[i-1].text, tailLen)
 		if tail == "" {
-			out = append(out, chunks[i])
+			out = append(out, spans[i])
 			continue
 		}
-		out = append(out, tail+"\n"+chunks[i])
+		// tail - это всегда непрерывная подстрока текста предыдущего
+		// фрагмента (lastRunes только отрезает края), поэтому её позицию
+		// можно найти обратным поиском и вычислить, откуда в исходном
+		// тексте реально начинается склеенный фрагмент.
+		off := spans[i].off
+		if idx := strings.LastIndex(spans[i-1].text, tail); idx >= 0 {
+			off = spans[i-1].off + idx
+		}
+		out = append(out, span{tail + "\n" + spans[i].text, off, spans[i].end})
 	}
 	return out
 }
@@ -181,3 +243,17 @@ func lastRunes(s string, n int) string {
 	}
 	return strings.TrimSpace(tail)
 }
+
+// newlineOffsets возвращает байтовые смещения всех переводов строк text.
+func newlineOffsets(text string) []int {
+	var nl []int
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			nl = append(nl, i)
+		}
+	}
+	return nl
+}
+
+// lineAt возвращает 1-based номер строки, в которой лежит байт off.
+func lineAt(nl []int, off int) int { return sort.SearchInts(nl, off) + 1 }

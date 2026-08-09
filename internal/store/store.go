@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"senso/internal/chunk"
 	"senso/internal/i18n"
 	"senso/internal/stem"
 	"senso/internal/vecext"
@@ -25,7 +26,7 @@ func init() {
 }
 
 // schemaVersion - текущая версия схемы, хранится в meta.schema_version.
-const schemaVersion = "2"
+const schemaVersion = "3"
 
 // Store - соединение с базой данных senso.
 type Store struct {
@@ -72,11 +73,17 @@ CREATE TABLE files(
   mtime INTEGER NOT NULL,
   size INTEGER NOT NULL,
   hash TEXT NOT NULL);
+-- line_start/line_end - диапазон строк исходного файла (1-based, line_end
+-- включительно), который покрывает чанк. Базы, созданные до появления этих
+-- колонок, несовместимы по schemaVersion и требуют переиндексации: номера
+-- строк нельзя восстановить задним числом без повторного чтения файлов.
 CREATE TABLE chunks(
   id INTEGER PRIMARY KEY,
   file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
   text TEXT NOT NULL,
+  line_start INTEGER NOT NULL DEFAULT 0,
+  line_end INTEGER NOT NULL DEFAULT 0,
   UNIQUE(file_id, seq));
 CREATE INDEX idx_chunks_file ON chunks(file_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
@@ -420,7 +427,7 @@ func (s *Store) TouchFile(path string, mtime, size int64) error {
 // ReplaceFile в одной транзакции удаляет прежние чанки файла path вместе с
 // их векторами и записывает новые chunks/vectors. Если файла ещё не было,
 // создаёт его.
-func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks []string, vectors [][]float32) error {
+func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks []chunk.Chunk, vectors [][]float32) error {
 	if len(vectors) > 0 && len(chunks) != len(vectors) {
 		return errors.New(i18n.Tf(
 			"store: ReplaceFile: chunk count (%d) does not match vector count (%d)",
@@ -501,8 +508,9 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		}
 	}
 
-	for i, text := range chunks {
-		res, err := tx.Exec(`INSERT INTO chunks(file_id, seq, text) VALUES (?, ?, ?)`, fileID, i, text)
+	for i, c := range chunks {
+		res, err := tx.Exec(`INSERT INTO chunks(file_id, seq, text, line_start, line_end) VALUES (?, ?, ?, ?, ?)`,
+			fileID, i, c.Text, c.StartLine, c.EndLine)
 		if err != nil {
 			return fmt.Errorf(i18n.T("store: insert chunk seq=%d: %w", "store: вставка chunk seq=%d: %w"), i, err)
 		}
@@ -510,7 +518,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO fts_chunks(body, chunk_id) VALUES (?, ?)`, stem.Text(text), chunkID); err != nil {
+		if _, err := tx.Exec(`INSERT INTO fts_chunks(body, chunk_id) VALUES (?, ?)`, stem.Text(c.Text), chunkID); err != nil {
 			return fmt.Errorf(i18n.T("store: insert into fts_chunks seq=%d: %w", "store: вставка в fts_chunks seq=%d: %w"), i, err)
 		}
 		if len(vectors) == 0 {
@@ -537,6 +545,12 @@ type Result struct {
 	// Score - единый показатель релевантности для семантического и
 	// лексического поиска: больше значение - тем релевантнее результат.
 	Score float64
+	// StartLine и EndLine - диапазон строк исходного файла (1-based,
+	// EndLine включительно), который покрывает чанк. Для баз, созданных
+	// версией senso без этой колонки, тут были бы нули, но такие базы
+	// отсекаются проверкой CheckSchema и требуют переиндексации.
+	StartLine int
+	EndLine   int
 }
 
 // Search выполняет KNN-поиск ближайших k чанков к вектору vector.
@@ -558,7 +572,7 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT f.path, c.seq, c.text, v.distance
+		`SELECT f.path, c.seq, c.text, v.distance, c.line_start, c.line_end
 		 FROM vec_chunks v
 		 JOIN chunks c ON c.id = v.chunk_id
 		 JOIN files f ON f.id = c.file_id
@@ -574,7 +588,7 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Path, &r.Seq, &r.Text, &r.Distance); err != nil {
+		if err := rows.Scan(&r.Path, &r.Seq, &r.Text, &r.Distance, &r.StartLine, &r.EndLine); err != nil {
 			return nil, err
 		}
 		// Distance - косинусное расстояние, Score - обратная ему близость.
@@ -599,7 +613,7 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT f.path, c.seq, c.text, bm25(fts_chunks) AS rank
+		`SELECT f.path, c.seq, c.text, bm25(fts_chunks) AS rank, c.line_start, c.line_end
 		 FROM fts_chunks
 		 JOIN chunks c ON c.id = fts_chunks.chunk_id
 		 JOIN files f ON f.id = c.file_id
@@ -617,7 +631,7 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 	for rows.Next() {
 		var r Result
 		var rank float64
-		if err := rows.Scan(&r.Path, &r.Seq, &r.Text, &rank); err != nil {
+		if err := rows.Scan(&r.Path, &r.Seq, &r.Text, &rank, &r.StartLine, &r.EndLine); err != nil {
 			return nil, err
 		}
 		// bm25 в SQLite отрицателен: чем меньше (отрицательнее), тем
