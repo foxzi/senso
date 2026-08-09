@@ -65,8 +65,13 @@ func findUp(startDir string) (string, bool) {
 }
 
 // Create определяет путь к базе так же, как Find, но если база не найдена,
-// создаёт директорию <root>/.senso и возвращает путь к новому файлу базы.
-func Create(flagDB, root string) (string, error) {
+// создаёт директорию .senso в dir и возвращает путь к новому файлу базы.
+//
+// Вызывающий передаёт сюда текущую рабочую директорию, а не индексируемый
+// путь. Это принципиально: Find ищет .senso только вверх по дереву, поэтому
+// база, созданная внутри индексируемого подкаталога, оказалась бы невидима
+// для последующих search и status, запущенных из корня проекта.
+func Create(flagDB, dir string) (string, error) {
 	path, err := Find(flagDB)
 	if err == nil {
 		return path, nil
@@ -75,11 +80,11 @@ func Create(flagDB, root string) (string, error) {
 		return "", err
 	}
 
-	absRoot, err := filepath.Abs(root)
+	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-	senseDir := filepath.Join(absRoot, DirName)
+	senseDir := filepath.Join(absDir, DirName)
 	if err := os.MkdirAll(senseDir, 0o755); err != nil {
 		return "", err
 	}

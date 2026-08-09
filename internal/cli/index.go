@@ -36,9 +36,15 @@ func RunIndex(args []string) error {
 
 	dbPath, err := dbpath.Find(opts.DB)
 	if errors.Is(err, dbpath.ErrNotFound) {
-		// Для index отсутствие базы - не ошибка, создаём новую рядом с
-		// индексируемым путём.
-		dbPath, err = dbpath.Create(opts.DB, root)
+		// Для index отсутствие базы - не ошибка, создаём новую в текущей
+		// директории. Именно в текущей, а не в индексируемом пути: базу
+		// ищут обходом вверх, поэтому созданная внутри подкаталога она
+		// была бы не видна из корня проекта.
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			return wdErr
+		}
+		dbPath, err = dbpath.Create(opts.DB, wd)
 	}
 	if err != nil {
 		return err
@@ -242,6 +248,7 @@ func RunIndex(args []string) error {
 			vectorsLabel = i18n.T("yes", "да")
 		}
 		fmt.Fprintf(os.Stderr, i18n.T("done: %d files, %d changed, %d deleted, %d chunks in %s, vectors: %s\n", "готово: %d файлов, %d изменено, %d удалено, %d чанка за %s, векторы: %s\n"), len(candidates), changed, deleted, totalChunks, dur, vectorsLabel)
+		fmt.Fprintf(os.Stderr, i18n.T("database: %s\n", "база: %s\n"), shortenPath(dbPath, cwd))
 	}
 
 	return nil
