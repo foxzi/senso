@@ -1,9 +1,10 @@
 // Package extract извлекает простой текст из офисных документов.
 //
 // Поддерживаются форматы, разбираемые средствами стандартной библиотеки:
-// .docx и .odt (zip-контейнер с XML внутри) и .rtf (текстовый формат
-// с управляющими словами). Бинарный .doc (Word 97-2003) не поддерживается:
-// это OLE2-контейнер, разбор которого потребовал бы сторонней зависимости.
+// .docx, .odt и .ods (zip-контейнер с XML внутри), .rtf (текстовый формат
+// с управляющими словами), .fb2 (XML) и .ipynb (JSON). Бинарный .doc
+// (Word 97-2003) не поддерживается: это OLE2-контейнер, разбор которого
+// потребовал бы сторонней зависимости.
 //
 // Задача пакета - отдать содержимое документа как обычный текст, пригодный
 // для нарезки на чанки. Форматирование, стили и метаданные отбрасываются;
@@ -23,7 +24,7 @@ import (
 // Решение принимается только по расширению, содержимое не читается.
 func Supports(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".docx", ".odt", ".rtf":
+	case ".docx", ".odt", ".ods", ".rtf", ".fb2", ".ipynb":
 		return true
 	}
 	return false
@@ -38,8 +39,14 @@ func Text(name string, data []byte) (string, error) {
 		return docx(data)
 	case ".odt":
 		return odt(data)
+	case ".ods":
+		return ods(data)
 	case ".rtf":
 		return rtf(data)
+	case ".fb2":
+		return fb2(data)
+	case ".ipynb":
+		return ipynb(data)
 	}
 	return "", fmt.Errorf("extract: unsupported format %q", filepath.Ext(name))
 }

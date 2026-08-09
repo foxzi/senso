@@ -17,6 +17,13 @@ func odt(data []byte) (string, error) {
 	return openDocument(part)
 }
 
+// ods извлекает текст электронной таблицы OpenDocument (.ods).
+// Разметка та же, что у .odt, отличается только наполнением: весь текст
+// лежит в ячейках таблиц.
+func ods(data []byte) (string, error) {
+	return odt(data)
+}
+
 // openDocument разбирает разметку OpenDocument и собирает из неё текст.
 //
 // Символьные данные берутся только внутри абзацев text:p и заголовков
@@ -25,6 +32,11 @@ func odt(data []byte) (string, error) {
 // Внутри абзаца такого форматирования нет, поэтому всё его содержимое
 // (включая вложенные text:span и ссылки) идёт в результат как есть.
 //
+// Таблицы раскладываются построчно: ячейки одной строки разделяются
+// табуляцией, строки - переводом строки. Абзац внутри ячейки строку не
+// заканчивает, иначе каждая ячейка оказалась бы на своей строке и связь
+// между колонками при поиске терялась бы.
+//
 // Отдельно разбираются элементы, которые кодируют пробельные символы:
 // в ODF повторяющиеся пробелы, табуляции и переводы строк записываются
 // элементами text:s, text:tab и text:line-break, а не самими символами.
@@ -32,7 +44,12 @@ func openDocument(data []byte) (string, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 
 	var b strings.Builder
-	inPara := 0
+	inPara, inCell := 0, 0
+	// Абзацы внутри одной ячейки разделяются пробелом, но ставить его
+	// сразу нельзя: если абзац последний, пробел повиснет перед
+	// разделителем ячеек. Поэтому разделитель откладывается до
+	// следующего текста в той же ячейке.
+	gap := false
 
 	for {
 		tok, err := dec.Token()
@@ -48,6 +65,8 @@ func openDocument(data []byte) (string, error) {
 			switch t.Name.Local {
 			case "p", "h":
 				inPara++
+			case "table-cell":
+				inCell++
 			case "s":
 				if inPara > 0 {
 					b.WriteString(strings.Repeat(" ", spaceCount(t)))
@@ -66,17 +85,44 @@ func openDocument(data []byte) (string, error) {
 			case "p", "h":
 				if inPara > 0 {
 					inPara--
-					b.WriteByte('\n')
+					if inCell == 0 {
+						b.WriteByte('\n')
+					} else {
+						gap = true
+					}
 				}
+			case "table-cell":
+				if inCell > 0 {
+					inCell--
+					gap = false
+					b.WriteByte('\t')
+				}
+			case "table-row":
+				b.WriteByte('\n')
 			}
 		case xml.CharData:
 			if inPara > 0 {
+				if gap {
+					gap = false
+					b.WriteByte(' ')
+				}
 				b.Write(t)
 			}
 		}
 	}
 
-	return strings.TrimSpace(b.String()), nil
+	return tidy(b.String()), nil
+}
+
+// tidy убирает пробельные хвосты строк и пустые строки по краям текста.
+// Хвосты остаются от разделителей ячеек: последняя ячейка строки таблицы
+// всё равно дописывает табуляцию, а абзац внутри ячейки - пробел.
+func tidy(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " \t")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // spaceCount возвращает число пробелов, закодированных элементом text:s.
