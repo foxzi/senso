@@ -22,7 +22,7 @@ const leadShare = 3
 // сработал только семантический поиск), функция ведёт себя как snippet и
 // возвращает начало текста.
 func snippetAround(text, query string, maxRunes int) string {
-	collapsed := strings.Join(strings.Fields(text), " ")
+	collapsed := normalizeLines(text)
 	if utf8.RuneCountInString(collapsed) <= maxRunes {
 		return collapsed
 	}
@@ -50,6 +50,20 @@ func snippetAround(text, query string, maxRunes int) string {
 		out += "..."
 	}
 	return out
+}
+
+// normalizeLines мягко нормализует текст перед вырезкой сниппета: убирает
+// хвостовые пробелы и табуляции в каждой строке и пустые строки по краям
+// всего текста, но НЕ трогает переносы строк и внутренние отступы. Это
+// важно, потому что сниппет может быть фрагментом исходного кода или
+// структурированного текста - он должен оставаться читаемым для человека и
+// пригодным для передачи в LLM как есть, без схлопывания в одну строку.
+func normalizeLines(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Trim(strings.Join(lines, "\n"), "\n")
 }
 
 // matchRuneIndex возвращает индекс руны, с которой начинается первое слово

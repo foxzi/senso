@@ -39,7 +39,7 @@ func TestSnippet(t *testing.T) {
 		maxRunes int
 	}{
 		{"короткая строка не меняется", "hello world", 100},
-		{"переводы строк схлопнуты", "hello\nworld\n\nfoo   bar", 100},
+		{"переводы строк сохраняются", "hello\nworld\n\nfoo   bar", 100},
 		{"кириллица обрезается по рунам", "привет мир, это длинный текст на кириллице для проверки", 10},
 	}
 
@@ -58,14 +58,14 @@ func TestSnippet(t *testing.T) {
 		})
 	}
 
-	// короткая строка без изменений, кроме схлопывания пробелов
+	// короткая строка без изменений
 	if got := snippetAround("hello world", "", 100); got != "hello world" {
 		t.Errorf("snippetAround(short) = %q, хотим %q", got, "hello world")
 	}
 
-	// переводы строк и повторяющиеся пробелы схлопнуты в один пробел
-	if got := snippetAround("hello\nworld\n\nfoo   bar", "", 100); got != "hello world foo bar" {
-		t.Errorf("snippetAround(multiline) = %q, хотим %q", got, "hello world foo bar")
+	// переводы строк и внутренние пробелы сохраняются как есть
+	if got := snippetAround("hello\nworld\n\nfoo   bar", "", 100); got != "hello\nworld\n\nfoo   bar" {
+		t.Errorf("snippetAround(multiline) = %q, хотим %q", got, "hello\nworld\n\nfoo   bar")
 	}
 
 	// обрезка по рунам не рвёт символы и добавляет многоточие

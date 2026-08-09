@@ -97,6 +97,37 @@ func TestSnippetAroundRespectsLimit(t *testing.T) {
 	}
 }
 
+// TestSnippetAroundPreservesNewlines проверяет, что многострочный текст
+// (например, фрагмент кода) остаётся многострочным в сниппете: переносы
+// строк и отступы не схлопываются в один пробел.
+func TestSnippetAroundPreservesNewlines(t *testing.T) {
+	text := "func handler() {\n    payload := webhook.Read()\n    return payload\n}"
+
+	got := snippetAround(text, "webhook", 500)
+
+	if !strings.Contains(got, "\n") {
+		t.Errorf("сниппет потерял переносы строк: %q", got)
+	}
+	if !strings.Contains(got, "\n    payload") {
+		t.Errorf("сниппет потерял отступ строки: %q", got)
+	}
+}
+
+// TestNormalizeLinesTrimsTrailingWhitespaceAndOuterBlankLines проверяет, что
+// normalizeLines убирает хвостовые пробелы в строках и пустые строки по
+// краям текста, но сохраняет внутренние переносы и одиночные пустые строки
+// между абзацами.
+func TestNormalizeLinesTrimsTrailingWhitespaceAndOuterBlankLines(t *testing.T) {
+	text := "\n\n  первая строка  \n\nвторая строка\t\n\n\n"
+
+	got := normalizeLines(text)
+
+	want := "  первая строка\n\nвторая строка"
+	if got != want {
+		t.Errorf("normalizeLines = %q, ожидалось %q", got, want)
+	}
+}
+
 // TestSnippetAroundMatchAtEnd проверяет, что совпадение в самом конце текста
 // попадает в окно и окно не выходит за границы среза.
 func TestSnippetAroundMatchAtEnd(t *testing.T) {
