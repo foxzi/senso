@@ -14,6 +14,7 @@ import (
 	"senso/internal/chunk"
 	"senso/internal/dbpath"
 	"senso/internal/embed"
+	"senso/internal/i18n"
 	"senso/internal/store"
 )
 
@@ -61,7 +62,7 @@ func RunIndex(args []string) error {
 	if existingModel, existingDim, metaErr := s.Meta(); metaErr == nil {
 		fresh = false
 		if opts.Embed && existingModel != "" && existingModel != opts.Model {
-			return fmt.Errorf("индекс построен моделью %s (dim %d); удалите .senso/index.db или укажите --model %s", existingModel, existingDim, existingModel)
+			return fmt.Errorf(i18n.T("index was built with model %s (dim %d); remove .senso/index.db or specify --model %s", "индекс построен моделью %s (dim %d); удалите .senso/index.db или укажите --model %s"), existingModel, existingDim, existingModel)
 		}
 	}
 
@@ -236,11 +237,11 @@ func RunIndex(args []string) error {
 
 	if !opts.Quiet {
 		dur := time.Since(start).Round(time.Second)
-		vectorsLabel := "нет"
+		vectorsLabel := i18n.T("no", "нет")
 		if opts.Embed {
-			vectorsLabel = "да"
+			vectorsLabel = i18n.T("yes", "да")
 		}
-		fmt.Fprintf(os.Stderr, "готово: %d файлов, %d изменено, %d удалено, %d чанка за %s, векторы: %s\n", len(candidates), changed, deleted, totalChunks, dur, vectorsLabel)
+		fmt.Fprintf(os.Stderr, i18n.T("done: %d files, %d changed, %d deleted, %d chunks in %s, vectors: %s\n", "готово: %d файлов, %d изменено, %d удалено, %d чанка за %s, векторы: %s\n"), len(candidates), changed, deleted, totalChunks, dur, vectorsLabel)
 	}
 
 	return nil
@@ -314,14 +315,14 @@ func embedAll(ctx context.Context, client *embed.Client, chunks []string, opts i
 
 	for _, err := range errs {
 		if err != nil {
-			return nil, fmt.Errorf("не удалось получить эмбеддинги от Ollama (%s, модель %s): %w", opts.Ollama, opts.Model, err)
+			return nil, fmt.Errorf(i18n.T("failed to get embeddings from ollama (%s, model %s): %w", "не удалось получить эмбеддинги от Ollama (%s, модель %s): %w"), opts.Ollama, opts.Model, err)
 		}
 	}
 
 	vectors := make([][]float32, 0, len(prefixed))
 	for i, vecs := range results {
 		if len(vecs) != len(batches[i]) {
-			return nil, fmt.Errorf("Ollama вернула %d векторов для %d текстов", len(vecs), len(batches[i]))
+			return nil, fmt.Errorf(i18n.T("ollama returned %d vectors for %d texts", "Ollama вернула %d векторов для %d текстов"), len(vecs), len(batches[i]))
 		}
 		for _, v := range vecs {
 			embed.Normalize(v)

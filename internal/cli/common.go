@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"senso/internal/dbpath"
+	"senso/internal/i18n"
 	"senso/internal/store"
 )
 
@@ -83,7 +84,7 @@ func openStore(flagDB string) (*store.Store, string, error) {
 	path, err := dbpath.Find(flagDB)
 	if err != nil {
 		if errors.Is(err, dbpath.ErrNotFound) {
-			return nil, "", errors.New("индекс не найден: запустите senso index <путь>")
+			return nil, "", errors.New(i18n.T("index not found: run senso index <path>", "индекс не найден: запустите senso index <путь>"))
 		}
 		return nil, "", err
 	}

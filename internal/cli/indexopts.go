@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"senso/internal/i18n"
 )
 
 // indexOptions хранит разобранные флаги и позиционный аргумент команды index.
@@ -40,21 +42,21 @@ func parseIndexArgs(args []string) (indexOptions, error) {
 
 	fs := flag.NewFlagSet("index", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&opts.DB, "db", "", "путь к файлу базы данных")
-	fs.BoolVar(&opts.Embed, "embed", false, "строить векторные эмбеддинги через Ollama (без флага индексация полностью локальная, лексическая, Ollama не требуется)")
-	fs.StringVar(&opts.Model, "model", "bge-m3", "модель эмбеддингов в Ollama (действует только с --embed)")
-	fs.StringVar(&opts.Ext, "ext", "", "список расширений файлов через запятую")
-	fs.StringVar(&opts.Exclude, "exclude", "", "список glob-шаблонов исключений через запятую")
-	fs.BoolVar(&opts.NoGitignore, "no-gitignore", false, "не учитывать .gitignore")
-	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, "размер чанка в рунах")
-	fs.IntVar(&opts.Overlap, "overlap", 150, "перекрытие чанков в рунах")
-	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", "префикс для поисковых запросов (действует только с --embed)")
-	fs.StringVar(&opts.DocPrefix, "doc-prefix", "", "префикс для документов при индексации (действует только с --embed)")
-	fs.IntVar(&opts.MaxFileSize, "max-file-size", 10, "максимальный размер файла в МБ")
-	fs.IntVar(&opts.Concurrency, "concurrency", 4, "число параллельных обработчиков эмбеддинга (действует только с --embed)")
-	fs.BoolVar(&opts.Prune, "prune", true, "удалять из индекса файлы, отсутствующие на диске")
-	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, "адрес сервера Ollama (действует только с --embed)")
-	fs.BoolVar(&opts.Quiet, "quiet", false, "не выводить прогресс")
+	fs.StringVar(&opts.DB, "db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
+	fs.BoolVar(&opts.Embed, "embed", false, i18n.T("build vector embeddings via Ollama (without this flag indexing is fully local and lexical, Ollama is not required)", "строить векторные эмбеддинги через Ollama (без флага индексация полностью локальная, лексическая, Ollama не требуется)"))
+	fs.StringVar(&opts.Model, "model", "bge-m3", i18n.T("embedding model in Ollama (only applies with --embed)", "модель эмбеддингов в Ollama (действует только с --embed)"))
+	fs.StringVar(&opts.Ext, "ext", "", i18n.T("comma-separated list of file extensions", "список расширений файлов через запятую"))
+	fs.StringVar(&opts.Exclude, "exclude", "", i18n.T("comma-separated list of exclusion glob patterns", "список glob-шаблонов исключений через запятую"))
+	fs.BoolVar(&opts.NoGitignore, "no-gitignore", false, i18n.T("ignore .gitignore", "не учитывать .gitignore"))
+	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
+	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
+	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))
+	fs.StringVar(&opts.DocPrefix, "doc-prefix", "", i18n.T("prefix for documents during indexing (only applies with --embed)", "префикс для документов при индексации (действует только с --embed)"))
+	fs.IntVar(&opts.MaxFileSize, "max-file-size", 10, i18n.T("maximum file size in MB", "максимальный размер файла в МБ"))
+	fs.IntVar(&opts.Concurrency, "concurrency", 4, i18n.T("number of parallel embedding workers (only applies with --embed)", "число параллельных обработчиков эмбеддинга (действует только с --embed)"))
+	fs.BoolVar(&opts.Prune, "prune", true, i18n.T("remove files missing from disk from the index", "удалять из индекса файлы, отсутствующие на диске"))
+	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --embed)", "адрес сервера Ollama (действует только с --embed)"))
+	fs.BoolVar(&opts.Quiet, "quiet", false, i18n.T("do not print progress", "не выводить прогресс"))
 
 	if err := fs.Parse(args); err != nil {
 		return indexOptions{}, finishParse(fs, err)
@@ -67,23 +69,23 @@ func parseIndexArgs(args []string) (indexOptions, error) {
 	case 1:
 		opts.Path = rest[0]
 	default:
-		return indexOptions{}, usagef("index: ожидается не более одного позиционного аргумента (путь), получено %d", len(rest))
+		return indexOptions{}, usagef(i18n.T("index: expected at most one positional argument (path), got %d", "index: ожидается не более одного позиционного аргумента (путь), получено %d"), len(rest))
 	}
 
 	if opts.ChunkSize <= 0 {
-		return indexOptions{}, usagef("--chunk-size должен быть больше 0")
+		return indexOptions{}, usagef("%s", i18n.T("--chunk-size must be greater than 0", "--chunk-size должен быть больше 0"))
 	}
 	if opts.Overlap < 0 {
-		return indexOptions{}, usagef("--overlap не может быть отрицательным")
+		return indexOptions{}, usagef("%s", i18n.T("--overlap cannot be negative", "--overlap не может быть отрицательным"))
 	}
 	if opts.Overlap >= opts.ChunkSize {
-		return indexOptions{}, usagef("--overlap должен быть меньше --chunk-size")
+		return indexOptions{}, usagef("%s", i18n.T("--overlap must be less than --chunk-size", "--overlap должен быть меньше --chunk-size"))
 	}
 	if opts.Concurrency <= 0 {
-		return indexOptions{}, usagef("--concurrency должен быть больше 0")
+		return indexOptions{}, usagef("%s", i18n.T("--concurrency must be greater than 0", "--concurrency должен быть больше 0"))
 	}
 	if opts.MaxFileSize <= 0 {
-		return indexOptions{}, usagef("--max-file-size должен быть больше 0")
+		return indexOptions{}, usagef("%s", i18n.T("--max-file-size must be greater than 0", "--max-file-size должен быть больше 0"))
 	}
 
 	return opts, nil

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"senso/internal/embed"
+	"senso/internal/i18n"
 	"senso/internal/store"
 	"senso/internal/text"
 )
@@ -39,14 +41,14 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&opts.DB, "db", "", "путь к файлу базы данных")
-	fs.IntVar(&opts.K, "k", 10, "число возвращаемых чанков")
-	fs.BoolVar(&opts.JSON, "json", false, "вывести результаты в формате JSON")
-	fs.BoolVar(&opts.PathsOnly, "paths-only", false, "вывести только уникальные пути файлов")
-	fs.IntVar(&opts.Snippet, "snippet", 500, "длина фрагмента текста в результатах, в рунах")
-	fs.BoolVar(&opts.Semantic, "semantic", false, "искать по векторам вместо лексического поиска (требует индекса, построенного с senso index --embed, и доступной Ollama)")
-	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, "адрес сервера Ollama (действует только с --semantic)")
-	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", "префикс для поискового запроса (действует только с --semantic); по умолчанию берётся префикс, сохранённый при индексации (senso index --embed --query-prefix)")
+	fs.StringVar(&opts.DB, "db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
+	fs.IntVar(&opts.K, "k", 10, i18n.T("number of chunks to return", "число возвращаемых чанков"))
+	fs.BoolVar(&opts.JSON, "json", false, i18n.T("print results as JSON", "вывести результаты в формате JSON"))
+	fs.BoolVar(&opts.PathsOnly, "paths-only", false, i18n.T("print only unique file paths", "вывести только уникальные пути файлов"))
+	fs.IntVar(&opts.Snippet, "snippet", 500, i18n.T("length of the text snippet in results, in runes", "длина фрагмента текста в результатах, в рунах"))
+	fs.BoolVar(&opts.Semantic, "semantic", false, i18n.T("search by vectors instead of lexical search (requires an index built with senso index --embed, and Ollama available)", "искать по векторам вместо лексического поиска (требует индекса, построенного с senso index --embed, и доступной Ollama)"))
+	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --semantic)", "адрес сервера Ollama (действует только с --semantic)"))
+	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for the search query (only applies with --semantic); defaults to the prefix saved during indexing (senso index --embed --query-prefix)", "префикс для поискового запроса (действует только с --semantic); по умолчанию берётся префикс, сохранённый при индексации (senso index --embed --query-prefix)"))
 
 	if err := fs.Parse(args); err != nil {
 		return searchOptions{}, finishParse(fs, err)
@@ -54,16 +56,16 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 
 	opts.Query = strings.Join(fs.Args(), " ")
 	if opts.Query == "" {
-		return searchOptions{}, usagef("search: требуется текст запроса")
+		return searchOptions{}, usagef("%s", i18n.T("search: query text is required", "search: требуется текст запроса"))
 	}
 	if opts.K <= 0 {
-		return searchOptions{}, usagef("-k должен быть больше 0")
+		return searchOptions{}, usagef("%s", i18n.T("-k must be greater than 0", "-k должен быть больше 0"))
 	}
 	if opts.Snippet < 0 {
-		return searchOptions{}, usagef("--snippet не может быть отрицательным")
+		return searchOptions{}, usagef("%s", i18n.T("--snippet cannot be negative", "--snippet не может быть отрицательным"))
 	}
 	if opts.JSON && opts.PathsOnly {
-		return searchOptions{}, usagef("--json и --paths-only нельзя использовать одновременно")
+		return searchOptions{}, usagef("%s", i18n.T("--json and --paths-only cannot be used together", "--json и --paths-only нельзя использовать одновременно"))
 	}
 
 	return opts, nil
@@ -114,7 +116,7 @@ func searchSemantic(s *store.Store, opts searchOptions) ([]store.Result, error) 
 		return nil, err
 	}
 	if !hasVectors {
-		return nil, fmt.Errorf("в базе нет векторов: запустите \"senso index --embed\" для их построения")
+		return nil, errors.New(i18n.T("no vectors in the database: run \"senso index --embed\" to build them", "в базе нет векторов: запустите \"senso index --embed\" для их построения"))
 	}
 
 	model, _, err := s.Meta()
@@ -134,10 +136,10 @@ func searchSemantic(s *store.Store, opts searchOptions) ([]store.Result, error) 
 	queryText := text.Normalize(queryPrefix + opts.Query)
 	vectors, err := client.Embed(context.Background(), []string{queryText})
 	if err != nil {
-		return nil, fmt.Errorf("не удалось получить эмбеддинг запроса от Ollama (%s, модель %s): %w", opts.Ollama, model, err)
+		return nil, fmt.Errorf(i18n.T("failed to get query embedding from ollama (%s, model %s): %w", "не удалось получить эмбеддинг запроса от Ollama (%s, модель %s): %w"), opts.Ollama, model, err)
 	}
 	if len(vectors) != 1 {
-		return nil, fmt.Errorf("Ollama вернула %d векторов для 1 запроса", len(vectors))
+		return nil, fmt.Errorf(i18n.T("ollama returned %d vectors for 1 query", "Ollama вернула %d векторов для 1 запроса"), len(vectors))
 	}
 	vector := vectors[0]
 	embed.Normalize(vector)

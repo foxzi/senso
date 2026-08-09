@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 
+	"senso/internal/i18n"
 	"senso/internal/store"
 )
 
@@ -16,13 +17,13 @@ import (
 func RunStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dbFlag := fs.String("db", "", "путь к файлу базы данных")
-	jsonFlag := fs.Bool("json", false, "вывести статистику в формате JSON")
+	dbFlag := fs.String("db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
+	jsonFlag := fs.Bool("json", false, i18n.T("print statistics as JSON", "вывести статистику в формате JSON"))
 	if err := fs.Parse(args); err != nil {
 		return finishParse(fs, err)
 	}
 	if fs.NArg() != 0 {
-		return usagef("status: неизвестные аргументы: %v", fs.Args())
+		return usagef(i18n.T("status: unknown arguments: %v", "status: неизвестные аргументы: %v"), fs.Args())
 	}
 
 	s, path, err := openStore(*dbFlag)
@@ -101,31 +102,31 @@ func indexModeCode(stats store.Stats) string {
 // с векторами (семантический поиск) или без (только лексический).
 func indexModeText(stats store.Stats) string {
 	if stats.Vectors > 0 {
-		return "лексический и семантический"
+		return i18n.T("lexical and semantic", "лексический и семантический")
 	}
-	return "только лексический"
+	return i18n.T("lexical only", "только лексический")
 }
 
 // printStatusText печатает статистику в человекочитаемом текстовом виде.
 func printStatusText(path string, dbSize int64, stats store.Stats) {
-	fmt.Printf("база данных:    %s\n", path)
-	fmt.Printf("корень:         %s\n", stats.Root)
-	fmt.Printf("режим:          %s\n", indexModeText(stats))
+	fmt.Printf(i18n.T("database:       %s\n", "база данных:    %s\n"), path)
+	fmt.Printf(i18n.T("root:           %s\n", "корень:         %s\n"), stats.Root)
+	fmt.Printf(i18n.T("mode:           %s\n", "режим:          %s\n"), indexModeText(stats))
 	if stats.Model != "" {
-		fmt.Printf("модель:         %s\n", stats.Model)
-		fmt.Printf("размерность:    %d\n", stats.Dim)
+		fmt.Printf(i18n.T("model:          %s\n", "модель:         %s\n"), stats.Model)
+		fmt.Printf(i18n.T("dimensions:     %d\n", "размерность:    %d\n"), stats.Dim)
 	}
-	fmt.Printf("файлов:         %d\n", stats.Files)
-	fmt.Printf("чанков:         %d\n", stats.Chunks)
-	fmt.Printf("лексич. строк:  %d\n", stats.FTSRows)
+	fmt.Printf(i18n.T("files:          %d\n", "файлов:         %d\n"), stats.Files)
+	fmt.Printf(i18n.T("chunks:         %d\n", "чанков:         %d\n"), stats.Chunks)
+	fmt.Printf(i18n.T("fts rows:       %d\n", "лексич. строк:  %d\n"), stats.FTSRows)
 	if stats.Vectors > 0 {
-		fmt.Printf("векторов:       %d\n", stats.Vectors)
+		fmt.Printf(i18n.T("vectors:        %d\n", "векторов:       %d\n"), stats.Vectors)
 	}
-	fmt.Printf("размер базы:    %s\n", humanSize(dbSize))
-	fmt.Printf("индексировано:  %s\n", stats.IndexedAt)
+	fmt.Printf(i18n.T("db size:        %s\n", "размер базы:    %s\n"), humanSize(dbSize))
+	fmt.Printf(i18n.T("indexed at:     %s\n", "индексировано:  %s\n"), stats.IndexedAt)
 
 	if len(stats.Roots) > 1 {
-		fmt.Println("корни:")
+		fmt.Println(i18n.T("roots:", "корни:"))
 		keys := make([]string, 0, len(stats.Roots))
 		for k := range stats.Roots {
 			keys = append(keys, k)
