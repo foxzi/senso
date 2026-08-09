@@ -12,13 +12,32 @@ import (
 	"senso/internal/store"
 )
 
+// statusOptions хранит разобранные флаги команды status.
+type statusOptions struct {
+	DB   string
+	JSON bool
+}
+
+// statusFlagSet создаёт FlagSet подкоманды status, объявляет в opts все её
+// флаги и возвращает FlagSet без вызова Parse. Используется как при разборе
+// аргументов, так и при построении текста справки - это единственное место,
+// где перечислены флаги status.
+func statusFlagSet(opts *statusOptions) *flag.FlagSet {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.DB, "db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
+	fs.BoolVar(&opts.JSON, "json", false, i18n.T("print statistics as JSON", "вывести статистику в формате JSON"))
+	return fs
+}
+
 // RunStatus реализует подкоманду "status": печатает сводную информацию
 // об индексе - путь к базе, корень, модель, размер и время индексации.
 func RunStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	dbFlag := fs.String("db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
-	jsonFlag := fs.Bool("json", false, i18n.T("print statistics as JSON", "вывести статистику в формате JSON"))
+	var opts statusOptions
+	fs := statusFlagSet(&opts)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), commandHelpText(statusUsageLine(), statusSummary(), fs))
+	}
 	if err := fs.Parse(args); err != nil {
 		return finishParse(fs, err)
 	}
@@ -26,7 +45,7 @@ func RunStatus(args []string) error {
 		return usagef(i18n.T("status: unknown arguments: %v", "status: неизвестные аргументы: %v"), fs.Args())
 	}
 
-	s, path, err := openStore(*dbFlag)
+	s, path, err := openStore(opts.DB)
 	if err != nil {
 		return err
 	}
@@ -42,7 +61,7 @@ func RunStatus(args []string) error {
 		dbSize = info.Size()
 	}
 
-	if *jsonFlag {
+	if opts.JSON {
 		return printStatusJSON(path, dbSize, stats)
 	}
 	printStatusText(path, dbSize, stats)

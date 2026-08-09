@@ -12,40 +12,6 @@ import (
 	"senso/internal/i18n"
 )
 
-// helpTextEN - текст общей справки по подкомандам на английском.
-const helpTextEN = `senso - semantic search over files in a directory
-
-Usage:
-  senso <command> [arguments]
-
-Commands:
-  index    build or update the index for the given path
-  search   find files relevant to a query
-  status   show statistics for the current index
-  rm       remove a file or subtree from the index
-  version  show the version
-  help     show this help
-
-The --db <file> flag and the SENSO_DB environment variable set the path to the database.
-`
-
-// helpTextRU - текст общей справки по подкомандам на русском.
-const helpTextRU = `senso - семантический поиск по файлам в каталоге
-
-Использование:
-  senso <команда> [аргументы]
-
-Команды:
-  index    построить или обновить индекс для указанного пути
-  search   найти файлы, релевантные запросу
-  status   показать статистику по текущему индексу
-  rm       удалить файл или поддерево из индекса
-  version  показать версию
-  help     показать эту справку
-
-Флаг --db <file> и переменная окружения SENSO_DB задают путь к базе данных.
-`
-
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -55,7 +21,7 @@ func run(args []string) int {
 	i18n.Set(i18n.Detect(os.Getenv))
 
 	if len(args) == 0 {
-		fmt.Print(i18n.T(helpTextEN, helpTextRU))
+		fmt.Print(cli.HelpText())
 		return 0
 	}
 
@@ -64,7 +30,7 @@ func run(args []string) int {
 	var err error
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Print(i18n.T(helpTextEN, helpTextRU))
+		fmt.Print(cli.HelpText())
 		return 0
 	case "version":
 		fmt.Println("senso dev")

@@ -30,10 +30,11 @@ type searchOptions struct {
 	QueryPrefix string
 }
 
-// parseSearchArgs разбирает аргументы командной строки подкоманды search.
-func parseSearchArgs(args []string) (searchOptions, error) {
-	var opts searchOptions
-
+// searchFlagSet создаёт FlagSet подкоманды search, объявляет в opts все её
+// флаги и возвращает FlagSet без вызова Parse. Используется как при разборе
+// аргументов, так и при построении текста справки - это единственное место,
+// где перечислены флаги search.
+func searchFlagSet(opts *searchOptions) *flag.FlagSet {
 	defaultOllama := os.Getenv("OLLAMA_HOST")
 	if defaultOllama == "" {
 		defaultOllama = "http://localhost:11434"
@@ -49,6 +50,17 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 	fs.BoolVar(&opts.Semantic, "semantic", false, i18n.T("search by vectors instead of lexical search (requires an index built with senso index --embed, and Ollama available)", "искать по векторам вместо лексического поиска (требует индекса, построенного с senso index --embed, и доступной Ollama)"))
 	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --semantic)", "адрес сервера Ollama (действует только с --semantic)"))
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for the search query (only applies with --semantic); defaults to the prefix saved during indexing (senso index --embed --query-prefix)", "префикс для поискового запроса (действует только с --semantic); по умолчанию берётся префикс, сохранённый при индексации (senso index --embed --query-prefix)"))
+	return fs
+}
+
+// parseSearchArgs разбирает аргументы командной строки подкоманды search.
+func parseSearchArgs(args []string) (searchOptions, error) {
+	var opts searchOptions
+
+	fs := searchFlagSet(&opts)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), commandHelpText(searchUsageLine(), searchSummary(), fs))
+	}
 
 	if err := fs.Parse(args); err != nil {
 		return searchOptions{}, finishParse(fs, err)

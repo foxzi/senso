@@ -2,6 +2,7 @@ package cli
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,10 +32,11 @@ type indexOptions struct {
 	Quiet       bool
 }
 
-// parseIndexArgs разбирает аргументы командной строки подкоманды index.
-func parseIndexArgs(args []string) (indexOptions, error) {
-	var opts indexOptions
-
+// indexFlagSet создаёт FlagSet подкоманды index, объявляет в opts все её
+// флаги и возвращает FlagSet без вызова Parse. Используется как при разборе
+// аргументов, так и при построении текста справки - это единственное место,
+// где перечислены флаги index.
+func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	defaultOllama := os.Getenv("OLLAMA_HOST")
 	if defaultOllama == "" {
 		defaultOllama = "http://localhost:11434"
@@ -57,6 +59,17 @@ func parseIndexArgs(args []string) (indexOptions, error) {
 	fs.BoolVar(&opts.Prune, "prune", true, i18n.T("remove files missing from disk from the index", "удалять из индекса файлы, отсутствующие на диске"))
 	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --embed)", "адрес сервера Ollama (действует только с --embed)"))
 	fs.BoolVar(&opts.Quiet, "quiet", false, i18n.T("do not print progress", "не выводить прогресс"))
+	return fs
+}
+
+// parseIndexArgs разбирает аргументы командной строки подкоманды index.
+func parseIndexArgs(args []string) (indexOptions, error) {
+	var opts indexOptions
+
+	fs := indexFlagSet(&opts)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), commandHelpText(indexUsageLine(), indexSummary(), fs))
+	}
 
 	if err := fs.Parse(args); err != nil {
 		return indexOptions{}, finishParse(fs, err)
