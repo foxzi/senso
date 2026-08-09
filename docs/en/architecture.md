@@ -7,6 +7,16 @@
   (`SniffLen`, same as git), and if a file is written in a single-byte
   Cyrillic encoding, detects it and transcodes it. Only UTF-8 ever ends up
   in the index; the original encoding is never stored.
+- **`internal/extract`** — pulls plain text out of the `.docx`, `.odt` and
+  `.rtf` office formats using nothing but the standard library. DOCX and
+  ODT are ZIP archives, so exactly one entry is read from each
+  (`word/document.xml` and the body of `content.xml` respectively) and
+  parsed with streaming `encoding/xml`. RTF is handled by a small
+  hand-written control-word parser that understands groups, `\'hh`
+  escapes with the code page from `\ansicpgN`, and `\uN` with `\ucN`
+  replacement characters. The `.doc` format (Word 97-2003) is
+  deliberately unsupported: it would require an OLE2 container and piece
+  table reader, which is out of proportion with the rest of the package.
 - **`internal/chunk`** — splits normalized document text into fragments of
   roughly `--chunk-size` runes with `--overlap` runes of overlap. All
   sizes are measured in runes, not bytes, so that Cyrillic and CJK text
