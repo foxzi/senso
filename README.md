@@ -12,7 +12,9 @@ predictable exit codes.
 
 ## Key features
 
-- Full-text search on SQLite FTS5 (bm25 ranking).
+- Full-text search on SQLite FTS5 (bm25 ranking), also indexing file paths
+  and compound identifiers (`ReplaceFile`, `replace_file`, `replace-file`
+  are all found by the same query).
 - Works with Russian and English out of the box: case-insensitive matching,
   Unicode-aware tokenization, prefix queries (`поиск*`), and Snowball
   stemming per token (`файл` matches `файлам`/`файлов`, `search` matches

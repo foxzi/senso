@@ -709,3 +709,98 @@ func TestSearchLexicalReturnsLineRange(t *testing.T) {
 		t.Errorf("StartLine/EndLine = %d/%d, ожидалось 4/9", results[0].StartLine, results[0].EndLine)
 	}
 }
+
+// TestSearchLexicalByPath проверяет, что файл находится по словам своего
+// пути, даже если в тексте чанка этих слов нет.
+func TestSearchLexicalByPath(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/internal/store/migrations.sql", 1, 10, "hashA",
+		chunksOf("создание таблиц"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFile("/root/README.md", 1, 10, "hashB",
+		chunksOf("описание проекта"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.SearchLexical("migrations", 10)
+	if err != nil {
+		t.Fatalf("SearchLexical вернул ошибку: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("SearchLexical(\"migrations\") вернул %d результатов, ожидался 1", len(results))
+	}
+	if results[0].Path != "/root/internal/store/migrations.sql" {
+		t.Errorf("SearchLexical нашёл %q, ожидался файл миграций", results[0].Path)
+	}
+}
+
+// TestSearchLexicalByIdentifierParts проверяет, что составной идентификатор
+// находится по любой записи: по частям, слитно и в другом стиле.
+func TestSearchLexicalByIdentifierParts(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	text := "func (s *Store) ReplaceFile(path string) error"
+	if err := s.ReplaceFile("/root/a.go", 1, 10, "hashA", chunksOf(text), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, query := range []string{"ReplaceFile", "replace_file", "replace file"} {
+		t.Run(query, func(t *testing.T) {
+			results, err := s.SearchLexical(query, 10)
+			if err != nil {
+				t.Fatalf("SearchLexical вернул ошибку: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("SearchLexical(%q) вернул %d результатов, ожидался 1", query, len(results))
+			}
+		})
+	}
+}
+
+// TestSearchLexicalBodyOutranksPath проверяет расстановку весов: чанк, где
+// слово встречается в тексте, релевантнее чанка, где оно есть только в пути.
+func TestSearchLexicalBodyOutranksPath(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/notes.txt", 1, 10, "hashA",
+		chunksOf("здесь описан индексатор и его устройство"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFile("/root/индексатор/readme.txt", 1, 10, "hashB",
+		chunksOf("посторонний текст"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.SearchLexical("индексатор", 10)
+	if err != nil {
+		t.Fatalf("SearchLexical вернул ошибку: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("SearchLexical вернул %d результатов, ожидалось 2", len(results))
+	}
+	if results[0].Path != "/root/notes.txt" {
+		t.Errorf("первым идёт %q, ожидалось совпадение в тексте (/root/notes.txt)", results[0].Path)
+	}
+}
+
+// TestSearchLexicalPhraseIgnoresPath проверяет, что путь и идентификаторы не
+// вклиниваются во фразовый поиск по тексту: фраза из слова пути и слова
+// текста не совпадает ни с чем.
+func TestSearchLexicalPhraseIgnoresPath(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/отчет.txt", 1, 10, "hashA",
+		chunksOf("продажи выросли"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.SearchLexical(`"отчет продажи"`, 10)
+	if err != nil {
+		t.Fatalf("SearchLexical вернул ошибку: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("SearchLexical(фраза через путь) вернул %d результатов, ожидалось 0", len(results))
+	}
+}

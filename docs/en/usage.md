@@ -381,6 +381,25 @@ text is handled without detecting the language of the whole document. For
 example, a query for `file` finds text containing `files` or `filing`, and
 a query for `search` finds `searching`.
 
+**Searching by path and identifiers.** Besides the chunk text, the index
+also stores the file path and any compound identifiers found in the text
+(camelCase, snake_case, kebab-case). This lets you:
+
+- find a file by a word from its path: `senso search "migrations"` finds
+  chunks of files whose path contains `migrations`, even if that word is
+  not in the text itself;
+- find a compound identifier regardless of its spelling: `ReplaceFile`,
+  `replace_file` and `replace file` are all found by the same query
+  `senso search "replace file"`, because every one of these spellings is
+  split into the same word stems;
+- combine "where" and "what" in one query: `senso search "store ReplaceFile"`
+  finds the chunk where both a path containing `store` and the
+  `ReplaceFile` identifier are present.
+
+Path and identifiers carry less ranking weight than the chunk text itself
+(see `bm25Weights` in the architecture doc), so adding such terms to a
+query does not pull results away from actual text matches.
+
 **Query syntax:**
 
 - plain words separated by spaces are matched with an implicit AND (all
@@ -447,9 +466,9 @@ indexed database or unexpectedly returning a different kind of result.
   chunks by rune count (`--chunk-size`/`--overlap`), with no understanding
   of code structure (functions, classes, etc.).
 - Databases created by previous versions of senso are incompatible with
-  the current schema (the schema version is now 3). Any command
+  the current schema (the schema version is now 4). Any command
   (`index`, `search`, `status`, `rm`) refuses to work with such a
   database, exiting with code 1 and a message like "database was created
-  by an incompatible senso version (schema 2, need 3), remove the .senso
+  by an incompatible senso version (schema 3, need 4), remove the .senso
   directory and re-index" — fixed by removing the `.senso` directory and
   re-indexing; there is no on-the-fly schema migration.

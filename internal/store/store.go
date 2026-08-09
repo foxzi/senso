@@ -26,7 +26,7 @@ func init() {
 }
 
 // schemaVersion - текущая версия схемы, хранится в meta.schema_version.
-const schemaVersion = "3"
+const schemaVersion = "4"
 
 // Store - соединение с базой данных senso.
 type Store struct {
@@ -86,8 +86,14 @@ CREATE TABLE chunks(
   line_end INTEGER NOT NULL DEFAULT 0,
   UNIQUE(file_id, seq));
 CREATE INDEX idx_chunks_file ON chunks(file_id);
+-- body - текст чанка, path - путь к файлу, ids - слова составных
+-- идентификаторов (см. stem.Idents). Колонки разделены, чтобы фразовый
+-- поиск по тексту не сбивался вставками из пути и идентификаторов, а вклад
+-- каждой колонки в релевантность можно было взвесить отдельно (bm25Weights).
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
     body,
+    path,
+    ids,
     chunk_id UNINDEXED,
     tokenize="unicode61 remove_diacritics 2",
     prefix='2 3'
@@ -518,7 +524,10 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO fts_chunks(body, chunk_id) VALUES (?, ?)`, stem.Text(c.Text), chunkID); err != nil {
+		if _, err := tx.Exec(
+			`INSERT INTO fts_chunks(body, path, ids, chunk_id) VALUES (?, ?, ?, ?)`,
+			stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text), chunkID,
+		); err != nil {
 			return fmt.Errorf(i18n.T("store: insert into fts_chunks seq=%d: %w", "store: вставка в fts_chunks seq=%d: %w"), i, err)
 		}
 		if len(vectors) == 0 {
@@ -601,6 +610,14 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 	return results, nil
 }
 
+// bm25Weights - веса колонок fts_chunks в порядке их объявления (body,
+// path, ids, chunk_id) для функции bm25. Основной вес у текста чанка;
+// идентификаторы чуть слабее, потому что их слова уже частично попадают в
+// body; путь слабее всех, так как совпадение по пути одинаково для всех
+// чанков файла и само по себе не говорит, какой из них релевантнее.
+// Последний вес нулевой: chunk_id не индексируется.
+const bm25Weights = "1.0, 0.4, 0.8, 0.0"
+
 // SearchLexical выполняет полнотекстовый поиск по fts_chunks и возвращает до
 // k наиболее релевантных чанков. Query стеммируется через stem.Query, что
 // обеспечивает совпадение словоформ и поддержку фраз/префиксов. Если запрос
@@ -613,12 +630,13 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT f.path, c.seq, c.text, bm25(fts_chunks) AS rank, c.line_start, c.line_end
+		`SELECT f.path, c.seq, c.text, bm25(fts_chunks, `+bm25Weights+`) AS rank,
+		        c.line_start, c.line_end
 		 FROM fts_chunks
 		 JOIN chunks c ON c.id = fts_chunks.chunk_id
 		 JOIN files f ON f.id = c.file_id
 		 WHERE fts_chunks MATCH ?
-		 ORDER BY bm25(fts_chunks)
+		 ORDER BY rank
 		 LIMIT ?`,
 		stemmed, k,
 	)

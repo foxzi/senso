@@ -55,10 +55,18 @@
   language is chosen per token by the presence of Cyrillic characters.
   Functions: `Tokens` (tokenizing), `Fold` (folds ё/е and lowercases),
   `Text` (per-token stemming that preserves the number and order of
-  tokens — this is what keeps phrase search working on top of stems), and
+  tokens — this is what keeps phrase search working on top of stems),
   `Query` (builds the FTS5 `MATCH` expression: parses quotes as a phrase,
   does not stem asterisk-prefixed prefixes, wraps every token in quotes to
-  guard against FTS5 keywords like `OR`/`NEAR`).
+  guard against FTS5 keywords like `OR`/`NEAR`), `Path` (prepares a file
+  path for search: tokenizes it like plain text and additionally splits
+  compound names into words) and `Idents` (file `idents.go`: pulls compound
+  identifiers out of text — `ReplaceFile`, `replace_file`, `replace-file` —
+  and splits each into stems of its individual words plus a stem of the
+  joined form; abbreviations are split on the case transition
+  (`HTTPServer` → `http`, `server`), and digits stay attached to the
+  preceding word (`utf8` is one word); single-word tokens are skipped since
+  they already live in `body`).
 - **`internal/store`** — stores and searches the index in SQLite with the
   sqlite-vec extension: the schema, incremental updates of files and
   chunks, lexical search via FTS5/bm25, and vector search via
@@ -108,6 +116,8 @@ CREATE INDEX idx_chunks_file ON chunks(file_id);
 
 CREATE VIRTUAL TABLE fts_chunks USING fts5(
     body,
+    path,
+    ids,
     chunk_id UNINDEXED,
     tokenize="unicode61 remove_diacritics 2",
     prefix='2 3'
@@ -120,7 +130,7 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
 );
 ```
 
-- `meta` stores the schema version (currently 3), the embedding model and
+- `meta` stores the schema version (currently 4), the embedding model and
   its dimensionality, the index root, and the last indexing time. An empty
   `model`/`dim=0` is a valid state for a purely lexical index. Databases
   created by an older schema version are incompatible: senso refuses to
@@ -133,15 +143,32 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
   first and last line of the fragment in the source file, computed from
   byte offsets during splitting and printed in search output; rows are
   deleted in cascade when a file is removed (`ON DELETE CASCADE`).
-- `fts_chunks` is the virtual FTS5 table used for lexical search. The
-  `body` column holds the stemmed text (package `internal/stem`, see
-  above), not the raw text — that is what `MATCH` actually searches. The
-  `unicode61 remove_diacritics 2` tokenizer gives case-insensitivity but
-  does NOT fold the letters ё/е — `internal/stem` folds them by hand
+- `fts_chunks` is the virtual FTS5 table used for lexical search, with
+  three indexed columns. `body` holds the stemmed text of the chunk
+  (package `internal/stem`, see above) — that is what `MATCH` actually
+  searches. `path` holds the stemmed file path (`stem.Path`) — the same
+  string in every chunk of the file, which lets a file be found by a word
+  from its path (`senso search "migrations"`). `ids` holds the stems of
+  the words that compound identifiers in the chunk text are split into
+  (`stem.Idents`), so `ReplaceFile`, `replace_file` and `replace file` are
+  all found by the same query. The columns are kept separate so that
+  phrase search (`senso search '"search files"'`) matches within a single
+  column and is not thrown off by insertions from the path or identifiers.
+  The `unicode61 remove_diacritics 2` tokenizer gives case-insensitivity
+  but does NOT fold the letters ё/е — `internal/stem` folds them by hand
   before text reaches the index and before a query reaches `MATCH`.
   `prefix='2 3'` enables efficient prefix search starting from 2-3
   characters (queries like `word*`, which are not stemmed). Ranking is
-  done with the built-in `bm25()` function.
+  done with `bm25(fts_chunks, 1.0, 0.4, 0.8, 0.0)`, with column weights in
+  the order body, path, ids, chunk_id: the chunk text carries the highest
+  weight, identifiers are weighted a bit lower (their words already
+  partly overlap with `body`), and the path is weighted lowest, since it
+  is the same for every chunk of a file and by itself says nothing about
+  which chunk is more relevant. Known limitation: since the path is
+  duplicated into every chunk of a file, a word from the path of a very
+  large file becomes common in the corpus and barely affects ranking (its
+  IDF collapses); this does not hurt combined queries, since those are
+  ranked by the term from the text.
 - `vec_chunks` is the sqlite-vec (`vec0`) virtual table for vector search
   with the `cosine` metric. It is not created when the schema is first
   initialized, but lazily (`EnsureVectors`/
