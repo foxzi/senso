@@ -1,0 +1,39 @@
+# Конфигурация nfpm для сборки deb и rpm пакетов.
+# Значения VERSION и ARCH подставляются из окружения (см. .github/workflows/release.yml).
+# Локально: VERSION=0.1.0 ARCH=amd64 nfpm package -f packaging/nfpm.yaml -p deb -t dist/
+name: senso
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Sergei Vorontsov <piligrim@rootnix.net>
+description: |
+  Command-line tool for indexing local text files and searching across them.
+  Works fully offline: full-text search runs on SQLite FTS5, with an optional
+  semantic mode through a local Ollama server.
+vendor: Sergei Vorontsov
+homepage: https://github.com/foxzi/senso
+license: MIT
+
+contents:
+  - src: ./bin/senso
+    dst: /usr/bin/senso
+
+  - src: ./README.md
+    dst: /usr/share/doc/senso/README.md
+
+  - src: ./LICENSE
+    dst: /usr/share/doc/senso/LICENSE
+
+  - src: ./docs/en/usage.md
+    dst: /usr/share/doc/senso/en/usage.md
+
+  - src: ./docs/en/architecture.md
+    dst: /usr/share/doc/senso/en/architecture.md
+
+  - src: ./docs/ru/usage.md
+    dst: /usr/share/doc/senso/ru/usage.md
+
+  - src: ./docs/ru/architecture.md
+    dst: /usr/share/doc/senso/ru/architecture.md
