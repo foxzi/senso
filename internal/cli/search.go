@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"senso/internal/embed"
@@ -26,6 +27,7 @@ type searchOptions struct {
 	PathsOnly   bool
 	Snippet     int
 	Semantic    bool
+	Hybrid      bool
 	Ollama      string
 	QueryPrefix string
 }
@@ -48,6 +50,11 @@ func searchFlagSet(opts *searchOptions) *flag.FlagSet {
 	fs.BoolVar(&opts.PathsOnly, "paths-only", false, i18n.T("print only unique file paths", "вывести только уникальные пути файлов"))
 	fs.IntVar(&opts.Snippet, "snippet", 500, i18n.T("length of the text snippet in results, in runes", "длина фрагмента текста в результатах, в рунах"))
 	fs.BoolVar(&opts.Semantic, "semantic", false, i18n.T("search by vectors instead of lexical search (requires an index built with senso index --embed, and Ollama available)", "искать по векторам вместо лексического поиска (требует индекса, построенного с senso index --embed, и доступной Ollama)"))
+	// --hybrid объединяет лексический и семантический поиск через RRF (см.
+	// fuseRRF). Score в результатах этого режима - ранг RRF, а не показатель
+	// релевантности лексического или семантического поиска: сравнивать его
+	// со score из других режимов нельзя.
+	fs.BoolVar(&opts.Hybrid, "hybrid", false, i18n.T("combine lexical and semantic results (requires --embed index)", "объединить лексический и семантический результаты (нужен индекс с --embed)"))
 	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --semantic)", "адрес сервера Ollama (действует только с --semantic)"))
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for the search query (only applies with --semantic); defaults to the prefix saved during indexing (senso index --embed --query-prefix)", "префикс для поискового запроса (действует только с --semantic); по умолчанию берётся префикс, сохранённый при индексации (senso index --embed --query-prefix)"))
 	return fs
@@ -79,6 +86,9 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 	if opts.JSON && opts.PathsOnly {
 		return searchOptions{}, usagef("%s", i18n.T("--json and --paths-only cannot be used together", "--json и --paths-only нельзя использовать одновременно"))
 	}
+	if opts.Semantic && opts.Hybrid {
+		return searchOptions{}, usagef("%s", i18n.T("use either --semantic or --hybrid, not both", "укажите либо --semantic, либо --hybrid, но не оба"))
+	}
 
 	return opts, nil
 }
@@ -100,9 +110,12 @@ func RunSearch(args []string) error {
 	defer s.Close()
 
 	var results []store.Result
-	if opts.Semantic {
-		results, err = searchSemantic(s, opts)
-	} else {
+	switch {
+	case opts.Hybrid:
+		results, err = searchHybrid(s, opts)
+	case opts.Semantic:
+		results, err = searchSemantic(s, opts, opts.K)
+	default:
 		results, err = s.SearchLexical(opts.Query, opts.K)
 	}
 	if err != nil {
@@ -122,7 +135,9 @@ func RunSearch(args []string) error {
 
 // searchSemantic выполняет поиск по векторам: проверяет наличие векторов в
 // базе, получает эмбеддинг запроса от Ollama и вызывает store.Search.
-func searchSemantic(s *store.Store, opts searchOptions) ([]store.Result, error) {
+// k - число результатов, которое надо получить (для обычного семантического
+// поиска это opts.K, для гибридного - расширенный пул кандидатов).
+func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, error) {
 	hasVectors, err := s.HasVectors()
 	if err != nil {
 		return nil, err
@@ -156,12 +171,85 @@ func searchSemantic(s *store.Store, opts searchOptions) ([]store.Result, error) 
 	vector := vectors[0]
 	embed.Normalize(vector)
 
-	return s.Search(vector, opts.K)
+	return s.Search(vector, k)
+}
+
+// searchHybrid объединяет лексический и семантический поиск с помощью
+// Reciprocal Rank Fusion: у каждого источника запрашивается расширенный пул
+// кандидатов, чтобы слияние не упиралось в то, что итоговые top-K одного
+// метода не пересекаются с top-K другого.
+func searchHybrid(s *store.Store, opts searchOptions) ([]store.Result, error) {
+	pool := opts.K * 4
+	if pool < 50 {
+		pool = 50
+	}
+
+	lexical, err := s.SearchLexical(opts.Query, pool)
+	if err != nil {
+		return nil, err
+	}
+	semantic, err := searchSemantic(s, opts, pool)
+	if err != nil {
+		return nil, err
+	}
+
+	return fuseRRF([][]store.Result{lexical, semantic}, opts.K), nil
+}
+
+// rrfK - сглаживающая константа Reciprocal Rank Fusion. Значение 60 взято
+// из исходной статьи Cormack et al. и на практике почти не требует подбора.
+const rrfK = 60
+
+// fuseRRF объединяет несколько ранжированных списков результатов методом
+// Reciprocal Rank Fusion: вклад результата на позиции i (0-based) любого
+// списка равен 1/(rrfK + i + 1), вклады по спискам суммируются. Результаты
+// сопоставляются по паре (Path, Seq). Итог сортируется по убыванию
+// суммарного вклада, при равенстве - по Path, затем по Seq, для
+// детерминированности порядка. Возвращается не более k результатов; в поле
+// Score записывается суммарный вклад RRF - ранговый показатель, несравнимый
+// со score чисто лексического или чисто семантического поиска.
+func fuseRRF(lists [][]store.Result, k int) []store.Result {
+	type key struct {
+		path string
+		seq  int
+	}
+
+	fused := make(map[key]store.Result)
+	scores := make(map[key]float64)
+
+	for _, list := range lists {
+		for i, r := range list {
+			kk := key{path: r.Path, seq: r.Seq}
+			if _, ok := fused[kk]; !ok {
+				fused[kk] = r
+			}
+			scores[kk] += 1 / float64(rrfK+i+1)
+		}
+	}
+
+	out := make([]store.Result, 0, len(fused))
+	for kk, r := range fused {
+		r.Score = scores[kk]
+		out = append(out, r)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Seq < out[j].Seq
+	})
+
+	if len(out) > k {
+		out = out[:k]
+	}
+	return out
 }
 
 // formatResultHeader форматирует заголовочную строку одного результата:
-// путь с номером чанка через "#" и показатель релевантности с тремя знаками
-// после запятой (больше - релевантнее).
 // путь с номером чанка через "#", диапазон строк исходного файла и
 // показатель релевантности с тремя знаками после запятой (больше -
 // релевантнее). Если startLine == 0 (данных о строках нет), диапазон не

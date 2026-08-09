@@ -93,6 +93,17 @@ func TestParseSearchArgsInvalidSnippet(t *testing.T) {
 	}
 }
 
+func TestParseSearchArgsSemanticAndHybridConflict(t *testing.T) {
+	_, err := parseSearchArgs([]string{"--semantic", "--hybrid", "запрос"})
+	if err == nil {
+		t.Fatal("parseSearchArgs с --semantic и --hybrid не вернул ошибку")
+	}
+	var usageErr *UsageError
+	if !errors.As(err, &usageErr) {
+		t.Errorf("ожидался *UsageError, получено %T: %v", err, err)
+	}
+}
+
 func TestUniquePaths(t *testing.T) {
 	results := []store.Result{
 		{Path: "/a"},
@@ -154,5 +165,72 @@ func TestFormatResultHeaderWithLineRange(t *testing.T) {
 	want := "docs/setup.md#3  40-58  0.182"
 	if got != want {
 		t.Errorf("formatResultHeader = %q, ожидалось %q", got, want)
+	}
+}
+
+// TestFuseRRFPrefersDocumentInBothLists проверяет ключевое свойство RRF:
+// документ, стоящий вторым сразу в обоих списках, должен обогнать документ,
+// который занял первое место лишь в одном из них.
+func TestFuseRRFPrefersDocumentInBothLists(t *testing.T) {
+	lexical := []store.Result{
+		{Path: "/only-lexical", Seq: 0},
+		{Path: "/both", Seq: 0},
+	}
+	semantic := []store.Result{
+		{Path: "/only-semantic", Seq: 0},
+		{Path: "/both", Seq: 0},
+	}
+
+	got := fuseRRF([][]store.Result{lexical, semantic}, 10)
+
+	if len(got) == 0 || got[0].Path != "/both" {
+		t.Fatalf("fuseRRF[0] = %+v, ожидался документ /both первым", got)
+	}
+}
+
+// TestFuseRRFDeterministicOnTies проверяет, что при равных суммарных
+// вкладах порядок определяется по Path, затем по Seq.
+func TestFuseRRFDeterministicOnTies(t *testing.T) {
+	// Каждый ключ встречается ровно один раз на первом месте в своём
+	// списке - все три получают одинаковый вклад RRF и становятся
+	// "тем самым" случаем равенства сумм, который проверяет тест.
+	lists := [][]store.Result{
+		{{Path: "/b", Seq: 1}},
+		{{Path: "/a", Seq: 2}},
+		{{Path: "/a", Seq: 1}},
+	}
+
+	got := fuseRRF(lists, 10)
+
+	want := []struct {
+		path string
+		seq  int
+	}{
+		{"/a", 1},
+		{"/a", 2},
+		{"/b", 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("fuseRRF вернул %d результатов, ожидалось %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].Path != w.path || got[i].Seq != w.seq {
+			t.Errorf("fuseRRF[%d] = %s#%d, ожидалось %s#%d", i, got[i].Path, got[i].Seq, w.path, w.seq)
+		}
+	}
+}
+
+// TestFuseRRFLimitsToK проверяет, что fuseRRF не возвращает больше k
+// результатов, даже если объединённый пул кандидатов больше.
+func TestFuseRRFLimitsToK(t *testing.T) {
+	var list []store.Result
+	for i := 0; i < 5; i++ {
+		list = append(list, store.Result{Path: "/doc", Seq: i})
+	}
+
+	got := fuseRRF([][]store.Result{list}, 2)
+
+	if len(got) != 2 {
+		t.Fatalf("fuseRRF вернул %d результатов, ожидалось 2", len(got))
 	}
 }
