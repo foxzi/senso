@@ -297,6 +297,40 @@ func (s *Store) AddRoot(root string) error {
 	return s.SetMeta(rootsMetaKey, string(data))
 }
 
+// RemoveRoot убирает из meta.roots все корни, которые равны prefix или
+// лежат внутри поддерева prefix. Вызывается после удаления файлов из индекса,
+// чтобы список корней не накапливал записи, за которыми уже нет ни одного
+// файла. Возвращает признак того, что список действительно изменился.
+//
+// Корень, внутри которого лежит prefix (то есть предок удаляемого пути),
+// не трогается: из него удалили лишь часть поддерева, сам он остаётся
+// проиндексированным.
+func (s *Store) RemoveRoot(prefix string) (bool, error) {
+	prefix = filepath.Clean(prefix)
+
+	roots, err := s.Roots()
+	if err != nil {
+		return false, err
+	}
+
+	kept := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if pathInSubtree(r, prefix) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if len(kept) == len(roots) {
+		return false, nil
+	}
+
+	data, err := json.Marshal(kept)
+	if err != nil {
+		return false, err
+	}
+	return true, s.SetMeta(rootsMetaKey, string(data))
+}
+
 // pathInSubtree сообщает, лежит ли path внутри поддерева root (или равен
 // ему). Сравнение идёт по границам сегментов пути, поэтому "/a/bc" не
 // считается вложенным в "/a/b". По смыслу совпадает с cli.prefixInSubtree,

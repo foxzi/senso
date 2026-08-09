@@ -603,3 +603,73 @@ func TestSearchLexicalPunctuationOnly(t *testing.T) {
 		t.Errorf("SearchLexical(\"!!!\") вернул %d результатов, ожидалось 0", len(results))
 	}
 }
+
+// TestRemoveRootDropsCoveredRoots проверяет, что RemoveRoot убирает корень,
+// совпадающий с удаляемым путём, и вложенные в него корни.
+func TestRemoveRootDropsCoveredRoots(t *testing.T) {
+	s := mustOpenInit(t, "bge-m3", testDim)
+
+	for _, r := range []string{"/work/docs", "/work/config", "/work/config/nested"} {
+		if err := s.AddRoot(r); err != nil {
+			t.Fatalf("AddRoot(%q): %v", r, err)
+		}
+	}
+
+	changed, err := s.RemoveRoot("/work/config")
+	if err != nil {
+		t.Fatalf("RemoveRoot: %v", err)
+	}
+	if !changed {
+		t.Fatal("RemoveRoot вернул changed=false, хотя корень был в списке")
+	}
+
+	roots, err := s.Roots()
+	if err != nil {
+		t.Fatalf("Roots: %v", err)
+	}
+	for _, r := range roots {
+		if strings.HasPrefix(r, "/work/config") {
+			t.Fatalf("Roots = %v, корень /work/config не удалён", roots)
+		}
+	}
+	if !containsRoot(roots, "/work/docs") {
+		t.Fatalf("Roots = %v, потерян несвязанный корень /work/docs", roots)
+	}
+}
+
+// TestRemoveRootKeepsAncestor проверяет, что удаление подкаталога не
+// выбрасывает корень, внутри которого он лежит: из корня удалили лишь часть
+// поддерева, сам он остаётся проиндексированным.
+func TestRemoveRootKeepsAncestor(t *testing.T) {
+	s := mustOpenInit(t, "bge-m3", testDim)
+
+	if err := s.AddRoot("/work/docs"); err != nil {
+		t.Fatalf("AddRoot: %v", err)
+	}
+
+	changed, err := s.RemoveRoot("/work/docs/orders")
+	if err != nil {
+		t.Fatalf("RemoveRoot: %v", err)
+	}
+	if changed {
+		t.Error("RemoveRoot вернул changed=true для подкаталога корня")
+	}
+
+	roots, err := s.Roots()
+	if err != nil {
+		t.Fatalf("Roots: %v", err)
+	}
+	if !containsRoot(roots, "/work/docs") {
+		t.Fatalf("Roots = %v, корень-предок должен сохраниться", roots)
+	}
+}
+
+// containsRoot сообщает, есть ли want в списке roots.
+func containsRoot(roots []string, want string) bool {
+	for _, r := range roots {
+		if r == want {
+			return true
+		}
+	}
+	return false
+}

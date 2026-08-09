@@ -57,6 +57,13 @@ func RunRm(args []string) error {
 		return err
 	}
 
+	// Если удалённый путь покрывал целый зарегистрированный корень, этот
+	// корень больше ничего не описывает - убираем его из meta.roots, чтобы
+	// список не зарастал записями без единого файла.
+	if _, err := s.RemoveRoot(target); err != nil {
+		return err
+	}
+
 	cwd, err := os.Getwd()
 	if err == nil {
 		target = shortenPath(target, cwd)
