@@ -111,11 +111,11 @@ func RunSearch(args []string) error {
 
 	switch {
 	case opts.JSON:
-		return printSearchJSON(results, opts.Snippet)
+		return printSearchJSON(results, opts.Query, opts.Snippet)
 	case opts.PathsOnly:
 		printSearchPaths(results)
 	default:
-		printSearchText(results, opts.Snippet)
+		printSearchText(results, opts.Query, opts.Snippet)
 	}
 	return nil
 }
@@ -167,13 +167,14 @@ func formatResultHeader(path string, seq int, score float64) string {
 }
 
 // printSearchText печатает результаты в человекочитаемом виде: путь
-// сокращается относительно текущей директории, текст обрезается snippet'ом.
-func printSearchText(results []store.Result, snippetLen int) {
+// сокращается относительно текущей директории, текст обрезается окном
+// сниппета вокруг слова запроса.
+func printSearchText(results []store.Result, query string, snippetLen int) {
 	cwd, _ := os.Getwd()
 	for _, r := range results {
 		path := shortenPath(r.Path, cwd)
 		fmt.Println(formatResultHeader(path, r.Seq, r.Score))
-		fmt.Printf("    %s\n", snippet(r.Text, snippetLen))
+		fmt.Printf("    %s\n", snippetAround(r.Text, query, snippetLen))
 	}
 }
 
@@ -186,15 +187,16 @@ type searchResultJSON struct {
 }
 
 // printSearchJSON печатает результаты как JSON-массив объектов.
-// Пути в выводе абсолютные, текст обрезается snippet'ом.
-func printSearchJSON(results []store.Result, snippetLen int) error {
+// Пути в выводе абсолютные, текст обрезается окном сниппета вокруг слова
+// запроса.
+func printSearchJSON(results []store.Result, query string, snippetLen int) error {
 	out := make([]searchResultJSON, 0, len(results))
 	for _, r := range results {
 		out = append(out, searchResultJSON{
 			Path:  r.Path,
 			Chunk: r.Seq,
 			Score: r.Score,
-			Text:  snippet(r.Text, snippetLen),
+			Text:  snippetAround(r.Text, query, snippetLen),
 		})
 	}
 	data, err := json.MarshalIndent(out, "", "  ")

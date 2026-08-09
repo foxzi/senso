@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -43,7 +45,7 @@ func TestSnippet(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := snippet(tc.s, tc.maxRunes)
+			got := snippetAround(tc.s, "", tc.maxRunes)
 			if !utf8.ValidString(got) {
 				t.Fatalf("snippet вернул невалидную UTF-8 строку: %q", got)
 			}
@@ -51,25 +53,44 @@ func TestSnippet(t *testing.T) {
 			runeCount := utf8.RuneCountInString(got)
 			maxAllowed := tc.maxRunes + utf8.RuneCountInString("...")
 			if runeCount > maxAllowed {
-				t.Errorf("snippet(%q, %d) вернул %d рун, ожидалось не более %d", tc.s, tc.maxRunes, runeCount, maxAllowed)
+				t.Errorf("snippetAround(%q, %d) вернул %d рун, ожидалось не более %d", tc.s, tc.maxRunes, runeCount, maxAllowed)
 			}
 		})
 	}
 
 	// короткая строка без изменений, кроме схлопывания пробелов
-	if got := snippet("hello world", 100); got != "hello world" {
-		t.Errorf("snippet(short) = %q, хотим %q", got, "hello world")
+	if got := snippetAround("hello world", "", 100); got != "hello world" {
+		t.Errorf("snippetAround(short) = %q, хотим %q", got, "hello world")
 	}
 
 	// переводы строк и повторяющиеся пробелы схлопнуты в один пробел
-	if got := snippet("hello\nworld\n\nfoo   bar", 100); got != "hello world foo bar" {
-		t.Errorf("snippet(multiline) = %q, хотим %q", got, "hello world foo bar")
+	if got := snippetAround("hello\nworld\n\nfoo   bar", "", 100); got != "hello world foo bar" {
+		t.Errorf("snippetAround(multiline) = %q, хотим %q", got, "hello world foo bar")
 	}
 
 	// обрезка по рунам не рвёт символы и добавляет многоточие
-	got := snippet("привет мир", 3)
+	got := snippetAround("привет мир", "", 3)
 	want := "при..."
 	if got != want {
-		t.Errorf("snippet(cyrillic) = %q, хотим %q", got, want)
+		t.Errorf("snippetAround(cyrillic) = %q, хотим %q", got, want)
+	}
+}
+
+// TestOpenStoreMissingDBFile проверяет, что читающая команда с несуществующим
+// путём в --db получает понятную ошибку «индекс не найден» и, главное, не
+// создаёт на этом пути пустой файл базы.
+func TestOpenStoreMissingDBFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nope.db")
+
+	s, _, err := openStore(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("openStore для несуществующей базы вернул успех")
+	}
+	if !strings.Contains(err.Error(), "index not found") && !strings.Contains(err.Error(), "индекс не найден") {
+		t.Errorf("openStore вернул %v, ожидалась ошибка «индекс не найден»", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Errorf("openStore создал файл базы %s, хотя не должен был", path)
 	}
 }
