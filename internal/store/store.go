@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"senso/internal/i18n"
 	"senso/internal/stem"
 	"senso/internal/vecext"
 )
@@ -110,7 +111,11 @@ func (s *Store) Init(model string, dim int, root string) error {
 		return err
 	}
 	if curModel != "" && (curModel != model || curDim != dim) {
-		return fmt.Errorf("индекс построен моделью %s (dim %d); удалите базу данных или укажите --model %s", curModel, curDim, curModel)
+		return errors.New(i18n.Tf(
+			"index built with model %s (dim %d); delete the database or specify --model %s",
+			"индекс построен моделью %s (dim %d); удалите базу данных или укажите --model %s",
+			curModel, curDim, curModel,
+		))
 	}
 	return nil
 }
@@ -132,7 +137,11 @@ func (s *Store) CheckSchema() error {
 		return err
 	}
 	if curVersion != schemaVersion {
-		return fmt.Errorf("store: база создана несовместимой версией senso (схема %s, требуется %s), удалите каталог .senso и выполните индексацию заново", curVersion, schemaVersion)
+		return errors.New(i18n.Tf(
+			"store: database created by an incompatible senso version (schema %s, requires %s), delete the .senso directory and reindex",
+			"store: база создана несовместимой версией senso (схема %s, требуется %s), удалите каталог .senso и выполните индексацию заново",
+			curVersion, schemaVersion,
+		))
 	}
 	return nil
 }
@@ -158,7 +167,7 @@ func (s *Store) createSchema(model string, dim int, root string) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(schemaDDL); err != nil {
-		return fmt.Errorf("store: создание схемы: %w", err)
+		return fmt.Errorf(i18n.T("store: create schema: %w", "store: создание схемы: %w"), err)
 	}
 
 	meta := map[string]string{
@@ -170,7 +179,7 @@ func (s *Store) createSchema(model string, dim int, root string) error {
 	}
 	for k, v := range meta {
 		if _, err := tx.Exec(`INSERT INTO meta(key, value) VALUES (?, ?)`, k, v); err != nil {
-			return fmt.Errorf("store: запись meta.%s: %w", k, err)
+			return fmt.Errorf(i18n.T("store: write meta.%s: %w", "store: запись meta.%s: %w"), k, err)
 		}
 	}
 
@@ -180,14 +189,14 @@ func (s *Store) createSchema(model string, dim int, root string) error {
 // Meta возвращает модель эмбеддингов и её размерность, записанные в базе.
 func (s *Store) Meta() (model string, dim int, err error) {
 	if err = s.db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model); err != nil {
-		return "", 0, fmt.Errorf("store: чтение meta.model: %w", err)
+		return "", 0, fmt.Errorf(i18n.T("store: read meta.model: %w", "store: чтение meta.model: %w"), err)
 	}
 	var dimStr string
 	if err = s.db.QueryRow(`SELECT value FROM meta WHERE key='dim'`).Scan(&dimStr); err != nil {
-		return "", 0, fmt.Errorf("store: чтение meta.dim: %w", err)
+		return "", 0, fmt.Errorf(i18n.T("store: read meta.dim: %w", "store: чтение meta.dim: %w"), err)
 	}
 	if _, err = fmt.Sscanf(dimStr, "%d", &dim); err != nil {
-		return "", 0, fmt.Errorf("store: разбор meta.dim=%q: %w", dimStr, err)
+		return "", 0, fmt.Errorf(i18n.T("store: parse meta.dim=%q: %w", "store: разбор meta.dim=%q: %w"), dimStr, err)
 	}
 	return model, dim, nil
 }
@@ -196,7 +205,7 @@ func (s *Store) Meta() (model string, dim int, err error) {
 func (s *Store) SetMeta(key, value string) error {
 	if _, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
-		return fmt.Errorf("store: запись meta.%s: %w", key, err)
+		return fmt.Errorf(i18n.T("store: write meta.%s: %w", "store: запись meta.%s: %w"), key, err)
 	}
 	return nil
 }
@@ -210,7 +219,7 @@ func (s *Store) GetMeta(key string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: чтение meta.%s: %w", key, err)
+		return "", fmt.Errorf(i18n.T("store: read meta.%s: %w", "store: чтение meta.%s: %w"), key, err)
 	}
 	return value, nil
 }
@@ -233,7 +242,7 @@ func ensureVectorsExec(e execer, dim int) error {
 		dim,
 	)
 	if _, err := e.Exec(vecDDL); err != nil {
-		return fmt.Errorf("store: создание vec_chunks: %w", err)
+		return fmt.Errorf(i18n.T("store: create vec_chunks: %w", "store: создание vec_chunks: %w"), err)
 	}
 	return nil
 }
@@ -283,7 +292,7 @@ func (s *Store) TouchFile(path string, mtime, size int64) error {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("store: TouchFile: файл %q не найден", path)
+		return errors.New(i18n.Tf("store: TouchFile: file %q not found", "store: TouchFile: файл %q не найден", path))
 	}
 	return nil
 }
@@ -293,7 +302,11 @@ func (s *Store) TouchFile(path string, mtime, size int64) error {
 // создаёт его.
 func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks []string, vectors [][]float32) error {
 	if len(vectors) > 0 && len(chunks) != len(vectors) {
-		return fmt.Errorf("store: ReplaceFile: количество чанков (%d) не совпадает с количеством векторов (%d)", len(chunks), len(vectors))
+		return errors.New(i18n.Tf(
+			"store: ReplaceFile: chunk count (%d) does not match vector count (%d)",
+			"store: ReplaceFile: количество чанков (%d) не совпадает с количеством векторов (%d)",
+			len(chunks), len(vectors),
+		))
 	}
 
 	tx, err := s.db.Begin()
@@ -314,7 +327,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	// запросом.
 	var fileID int64
 	if err := tx.QueryRow(`SELECT id FROM files WHERE path=?`, path).Scan(&fileID); err != nil {
-		return fmt.Errorf("store: получение file_id: %w", err)
+		return fmt.Errorf(i18n.T("store: get file_id: %w", "store: получение file_id: %w"), err)
 	}
 
 	// vec_chunks не поддерживает внешние ключи - удаляем векторы явно по
@@ -323,7 +336,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	// пропускаем.
 	rows, err := tx.Query(`SELECT id FROM chunks WHERE file_id=?`, fileID)
 	if err != nil {
-		return fmt.Errorf("store: выборка старых chunk_id: %w", err)
+		return fmt.Errorf(i18n.T("store: select old chunk_id: %w", "store: выборка старых chunk_id: %w"), err)
 	}
 	var oldChunkIDs []int64
 	for rows.Next() {
@@ -343,23 +356,23 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	if len(oldChunkIDs) > 0 {
 		var n int
 		if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil {
-			return fmt.Errorf("store: проверка vec_chunks: %w", err)
+			return fmt.Errorf(i18n.T("store: check vec_chunks: %w", "store: проверка vec_chunks: %w"), err)
 		}
 		if n > 0 {
 			for _, id := range oldChunkIDs {
 				if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE chunk_id=?`, id); err != nil {
-					return fmt.Errorf("store: удаление вектора chunk_id=%d: %w", id, err)
+					return fmt.Errorf(i18n.T("store: delete vector chunk_id=%d: %w", "store: удаление вектора chunk_id=%d: %w"), id, err)
 				}
 			}
 		}
 		for _, id := range oldChunkIDs {
 			if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE chunk_id=?`, id); err != nil {
-				return fmt.Errorf("store: удаление из fts_chunks chunk_id=%d: %w", id, err)
+				return fmt.Errorf(i18n.T("store: delete from fts_chunks chunk_id=%d: %w", "store: удаление из fts_chunks chunk_id=%d: %w"), id, err)
 			}
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
-		return fmt.Errorf("store: удаление старых chunks: %w", err)
+		return fmt.Errorf(i18n.T("store: delete old chunks: %w", "store: удаление старых chunks: %w"), err)
 	}
 
 	if len(vectors) > 0 {
@@ -371,24 +384,24 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	for i, text := range chunks {
 		res, err := tx.Exec(`INSERT INTO chunks(file_id, seq, text) VALUES (?, ?, ?)`, fileID, i, text)
 		if err != nil {
-			return fmt.Errorf("store: вставка chunk seq=%d: %w", i, err)
+			return fmt.Errorf(i18n.T("store: insert chunk seq=%d: %w", "store: вставка chunk seq=%d: %w"), i, err)
 		}
 		chunkID, err := res.LastInsertId()
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO fts_chunks(body, chunk_id) VALUES (?, ?)`, stem.Text(text), chunkID); err != nil {
-			return fmt.Errorf("store: вставка в fts_chunks seq=%d: %w", i, err)
+			return fmt.Errorf(i18n.T("store: insert into fts_chunks seq=%d: %w", "store: вставка в fts_chunks seq=%d: %w"), i, err)
 		}
 		if len(vectors) == 0 {
 			continue
 		}
 		blob, err := vecext.SerializeFloat32(vectors[i])
 		if err != nil {
-			return fmt.Errorf("store: сериализация вектора seq=%d: %w", i, err)
+			return fmt.Errorf(i18n.T("store: serialize vector seq=%d: %w", "store: сериализация вектора seq=%d: %w"), i, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO vec_chunks(chunk_id, embedding) VALUES (?, ?)`, chunkID, blob); err != nil {
-			return fmt.Errorf("store: вставка вектора seq=%d: %w", i, err)
+			return fmt.Errorf(i18n.T("store: insert vector seq=%d: %w", "store: вставка вектора seq=%d: %w"), i, err)
 		}
 	}
 
@@ -413,12 +426,15 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 		return nil, err
 	}
 	if !hasVectors {
-		return nil, fmt.Errorf("store: в индексе нет векторов; запустите senso index --embed")
+		return nil, errors.New(i18n.T(
+			"store: index has no vectors; run senso index --embed",
+			"store: в индексе нет векторов; запустите senso index --embed",
+		))
 	}
 
 	blob, err := vecext.SerializeFloat32(vector)
 	if err != nil {
-		return nil, fmt.Errorf("store: сериализация вектора запроса: %w", err)
+		return nil, fmt.Errorf(i18n.T("store: serialize query vector: %w", "store: сериализация вектора запроса: %w"), err)
 	}
 
 	rows, err := s.db.Query(
@@ -431,7 +447,7 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 		blob, k,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store: KNN-поиск: %w", err)
+		return nil, fmt.Errorf(i18n.T("store: KNN search: %w", "store: KNN-поиск: %w"), err)
 	}
 	defer rows.Close()
 
@@ -473,7 +489,7 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 		stemmed, k,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store: лексический поиск: %w", err)
+		return nil, fmt.Errorf(i18n.T("store: lexical search: %w", "store: лексический поиск: %w"), err)
 	}
 	defer rows.Close()
 

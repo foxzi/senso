@@ -11,6 +11,8 @@ import (
 	"math"
 	"net/http"
 	"time"
+
+	"senso/internal/i18n"
 )
 
 // maxAttempts - число попыток запроса (1 основная + 2 повторных).
@@ -65,7 +67,7 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error)
 
 	reqBody, err := json.Marshal(embedRequest{Model: c.model, Input: texts})
 	if err != nil {
-		return nil, fmt.Errorf("ollama недоступен по адресу %s (модель %s): %w", c.baseURL, c.model, err)
+		return nil, fmt.Errorf(i18n.T("ollama unavailable at %s (model %s): %w", "ollama недоступен по адресу %s (модель %s): %w"), c.baseURL, c.model, err)
 	}
 
 	var lastErr error
@@ -83,7 +85,10 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error)
 		if err == nil {
 			if len(embeddings) != len(texts) {
 				return nil, fmt.Errorf(
-					"ollama недоступен по адресу %s (модель %s): получено %d векторов, ожидалось %d",
+					i18n.T(
+						"ollama unavailable at %s (model %s): got %d vectors, expected %d",
+						"ollama недоступен по адресу %s (модель %s): получено %d векторов, ожидалось %d",
+					),
 					c.baseURL, c.model, len(embeddings), len(texts),
 				)
 			}
@@ -104,37 +109,43 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error)
 func (c *Client) doRequest(ctx context.Context, reqBody []byte) ([][]float32, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/embed", bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, false, fmt.Errorf("ollama недоступен по адресу %s (модель %s): %w", c.baseURL, c.model, err)
+		return nil, false, fmt.Errorf(i18n.T("ollama unavailable at %s (model %s): %w", "ollama недоступен по адресу %s (модель %s): %w"), c.baseURL, c.model, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, true, fmt.Errorf("ollama недоступен по адресу %s (модель %s): %w", c.baseURL, c.model, err)
+		return nil, true, fmt.Errorf(i18n.T("ollama unavailable at %s (model %s): %w", "ollama недоступен по адресу %s (модель %s): %w"), c.baseURL, c.model, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, true, fmt.Errorf("ollama недоступен по адресу %s (модель %s): %w", c.baseURL, c.model, err)
+		return nil, true, fmt.Errorf(i18n.T("ollama unavailable at %s (model %s): %w", "ollama недоступен по адресу %s (модель %s): %w"), c.baseURL, c.model, err)
 	}
 
 	if resp.StatusCode >= 500 {
 		return nil, true, fmt.Errorf(
-			"ollama недоступен по адресу %s (модель %s): ошибка сервера %d: %s",
+			i18n.T(
+				"ollama unavailable at %s (model %s): server error %d: %s",
+				"ollama недоступен по адресу %s (модель %s): ошибка сервера %d: %s",
+			),
 			c.baseURL, c.model, resp.StatusCode, string(body),
 		)
 	}
 	if resp.StatusCode >= 400 {
 		return nil, false, fmt.Errorf(
-			"ollama недоступен по адресу %s (модель %s): ошибка запроса %d: %s",
+			i18n.T(
+				"ollama unavailable at %s (model %s): request error %d: %s",
+				"ollama недоступен по адресу %s (модель %s): ошибка запроса %d: %s",
+			),
 			c.baseURL, c.model, resp.StatusCode, string(body),
 		)
 	}
 
 	var parsed embedResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, false, fmt.Errorf("ollama недоступен по адресу %s (модель %s): %w", c.baseURL, c.model, err)
+		return nil, false, fmt.Errorf(i18n.T("ollama unavailable at %s (model %s): %w", "ollama недоступен по адресу %s (модель %s): %w"), c.baseURL, c.model, err)
 	}
 
 	return parsed.Embeddings, false, nil

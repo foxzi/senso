@@ -24,7 +24,7 @@ const EnvVar = "SENSO_DB"
 
 // ErrNotFound возвращается, когда директория .senso не найдена
 // ни по флагу, ни по переменной окружения, ни поиском вверх по дереву.
-var ErrNotFound = errors.New("dbpath: директория .senso не найдена")
+var ErrNotFound = errors.New("dbpath: .senso directory not found")
 
 // Find определяет путь к файлу базы данных по приоритету:
 // флаг --db, переменная окружения SENSO_DB, поиск .senso вверх по дереву.
