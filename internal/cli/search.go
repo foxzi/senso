@@ -30,6 +30,11 @@ type searchOptions struct {
 	Hybrid      bool
 	Ollama      string
 	QueryPrefix string
+
+	Path    string
+	Ext     string
+	Exclude string
+	Root    string
 }
 
 // searchFlagSet создаёт FlagSet подкоманды search, объявляет в opts все её
@@ -49,6 +54,13 @@ func searchFlagSet(opts *searchOptions) *flag.FlagSet {
 	fs.BoolVar(&opts.JSON, "json", false, i18n.T("print results as JSON", "вывести результаты в формате JSON"))
 	fs.BoolVar(&opts.PathsOnly, "paths-only", false, i18n.T("print only unique file paths", "вывести только уникальные пути файлов"))
 	fs.IntVar(&opts.Snippet, "snippet", 500, i18n.T("length of the text snippet in results, in runes", "длина фрагмента текста в результатах, в рунах"))
+	// --path/--ext/--exclude/--root фильтруют уже найденные результаты, а не
+	// список файлов при индексации (в отличие от одноимённых флагов index),
+	// поэтому применяются одинаково в lexical, semantic и hybrid режимах.
+	fs.StringVar(&opts.Path, "path", "", i18n.T("comma-separated list of glob patterns: only results with a matching path are kept", "список glob-шаблонов через запятую: остаются только результаты с подходящим путём"))
+	fs.StringVar(&opts.Ext, "ext", "", i18n.T("comma-separated list of file extensions: only results with a matching extension are kept", "список расширений файлов через запятую: остаются только результаты с подходящим расширением"))
+	fs.StringVar(&opts.Exclude, "exclude", "", i18n.T("comma-separated list of glob patterns: results with a matching path are dropped (takes priority over --path)", "список glob-шаблонов через запятую: результаты с подходящим путём отбрасываются (имеет приоритет над --path)"))
+	fs.StringVar(&opts.Root, "root", "", i18n.T("keep only results inside this indexed root (see senso status)", "оставить только результаты внутри этого проиндексированного корня (см. senso status)"))
 	fs.BoolVar(&opts.Semantic, "semantic", false, i18n.T("search by vectors instead of lexical search (requires an index built with senso index --embed, and Ollama available)", "искать по векторам вместо лексического поиска (требует индекса, построенного с senso index --embed, и доступной Ollama)"))
 	// --hybrid объединяет лексический и семантический поиск через RRF (см.
 	// fuseRRF). Score в результатах этого режима - ранг RRF, а не показатель
@@ -109,17 +121,21 @@ func RunSearch(args []string) error {
 	}
 	defer s.Close()
 
-	var results []store.Result
-	switch {
-	case opts.Hybrid:
-		results, err = searchHybrid(s, opts)
-	case opts.Semantic:
-		results, err = searchSemantic(s, opts, opts.K)
-	default:
-		results, err = s.SearchLexical(opts.Query, opts.K)
-	}
+	roots, err := s.Roots()
 	if err != nil {
 		return err
+	}
+	filter, err := newResultFilter(opts.Path, opts.Ext, opts.Exclude, opts.Root, roots)
+	if err != nil {
+		return err
+	}
+
+	results, err := runSearchQuery(s, opts, filter)
+	if err != nil {
+		return err
+	}
+	if len(results) > opts.K {
+		results = results[:opts.K]
 	}
 
 	switch {
@@ -131,6 +147,70 @@ func RunSearch(args []string) error {
 		printSearchText(results, opts.Query, opts.Snippet)
 	}
 	return nil
+}
+
+// filterPoolMultiplier и filterPoolMinimum задают размер расширенного пула
+// кандидатов, который запрашивается у store, когда активен хотя бы один
+// фильтр результатов (--path/--ext/--exclude/--root). Фильтрация отбрасывает
+// часть кандидатов, поэтому без расширения пула после неё могло бы остаться
+// меньше -k результатов, даже если подходящих чанков в базе достаточно.
+// Множитель 10 - грубая эвристика: типичные фильтры (расширение, поддиректория)
+// не отбрасывают настолько большую долю кандидатов, чтобы пул её не покрыл.
+const (
+	filterPoolMultiplier = 10
+	filterPoolMinimum    = 100
+)
+
+// searchPoolSize возвращает число кандидатов, которое нужно запросить у
+// store перед фильтрацией: без активных фильтров - ровно k, с фильтрами -
+// расширенный пул (см. filterPoolMultiplier/filterPoolMinimum).
+func searchPoolSize(k int, filter *resultFilter) int {
+	if !filter.Active() {
+		return k
+	}
+	pool := k * filterPoolMultiplier
+	if pool < filterPoolMinimum {
+		pool = filterPoolMinimum
+	}
+	return pool
+}
+
+// filterResults применяет filter к results, сохраняя исходный порядок.
+// Неактивный (или nil) filter возвращает results без изменений.
+func filterResults(results []store.Result, filter *resultFilter) []store.Result {
+	if !filter.Active() {
+		return results
+	}
+	out := make([]store.Result, 0, len(results))
+	for _, r := range results {
+		if filter.Match(r.Path) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// runSearchQuery выбирает режим поиска (lexical/semantic/hybrid) согласно
+// opts и применяет filter к результатам. Гибридный режим фильтрует список
+// каждого источника до fuseRRF (см. searchHybrid), поэтому здесь для него
+// повторная фильтрация не нужна.
+func runSearchQuery(s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
+	if opts.Hybrid {
+		return searchHybrid(s, opts, filter)
+	}
+
+	pool := searchPoolSize(opts.K, filter)
+	var results []store.Result
+	var err error
+	if opts.Semantic {
+		results, err = searchSemantic(s, opts, pool)
+	} else {
+		results, err = s.SearchLexical(opts.Query, pool)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return filterResults(results, filter), nil
 }
 
 // searchSemantic выполняет поиск по векторам: проверяет наличие векторов в
@@ -177,11 +257,17 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 // searchHybrid объединяет лексический и семантический поиск с помощью
 // Reciprocal Rank Fusion: у каждого источника запрашивается расширенный пул
 // кандидатов, чтобы слияние не упиралось в то, что итоговые top-K одного
-// метода не пересекаются с top-K другого.
-func searchHybrid(s *store.Store, opts searchOptions) ([]store.Result, error) {
+// метода не пересекаются с top-K другого. При активных фильтрах пул
+// дополнительно расширяется до searchPoolSize (какой из двух пулов больше),
+// а каждый список фильтруется до fuseRRF - иначе RRF тратил бы ранги на
+// кандидатов, которые в любом случае будут отброшены.
+func searchHybrid(s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
 	pool := opts.K * 4
 	if pool < 50 {
 		pool = 50
+	}
+	if fp := searchPoolSize(opts.K, filter); fp > pool {
+		pool = fp
 	}
 
 	lexical, err := s.SearchLexical(opts.Query, pool)
@@ -192,6 +278,9 @@ func searchHybrid(s *store.Store, opts searchOptions) ([]store.Result, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	lexical = filterResults(lexical, filter)
+	semantic = filterResults(semantic, filter)
 
 	return fuseRRF([][]store.Result{lexical, semantic}, opts.K), nil
 }

@@ -21,6 +21,8 @@ predictable exit codes.
   `searching`).
 - Phrase search in double quotes (`senso search '"поиск файлов"'`) — words
   must be adjacent, but any word form is matched.
+- Result filters for `search`: `--path`, `--ext`, `--exclude`, `--root`,
+  usable in lexical, semantic and hybrid modes alike.
 - Incremental indexing: unchanged files are skipped by mtime/size, changed
   content is detected by a content hash.
 - Indexes `.docx`, `.odt`, `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`,

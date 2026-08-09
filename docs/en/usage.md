@@ -168,6 +168,10 @@ Flags:
 | `--json` | `false` | print results as JSON |
 | `--paths-only` | `false` | print only unique file paths |
 | `--snippet <n>` | `500` | length of the text snippet in results, in runes |
+| `--path <glob,...>` | `""` | keep only results whose path matches at least one of the comma-separated glob patterns |
+| `--ext <list>` | `""` | keep only results with one of the comma-separated extensions (with or without leading dot) |
+| `--exclude <glob,...>` | `""` | drop results whose path matches at least one of the comma-separated glob patterns (takes priority over `--path`) |
+| `--root <dir>` | `""` | keep only results inside the given indexed root (see `senso status`) |
 | `--semantic` | `false` | search by vectors instead of lexical search (requires an index built with `senso index --embed` and a reachable Ollama) |
 | `--hybrid` | `false` | combine lexical and semantic results (same requirements as `--semantic`; cannot be used together with it) |
 | `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (relevant with `--semantic` and `--hybrid`) |
@@ -182,7 +186,28 @@ senso search --json "text" | jq '.[].path'
 senso search --paths-only "text" | xargs -I{} wc -l {}
 senso search --semantic "a query about the meaning, not the words"
 senso search --hybrid "an exact term and its meaning at once"
+senso search --json --path 'internal/**' --ext go "replace file transaction"
 ```
+
+#### Result filters: `--path`, `--ext`, `--exclude`, `--root`
+
+These four flags filter results that have already been found, and behave
+the same way in lexical, semantic (`--semantic`) and hybrid (`--hybrid`)
+search modes.
+
+`--path` and `--exclude` take a comma-separated list of glob patterns
+(`internal/**`, `*.go`, `docs/**/*.md`); a pattern is matched both against
+the result path relative to each indexed root and against the absolute
+path. `--exclude` takes priority over `--path`: a result matching an
+exclusion pattern is dropped even if it also matches `--path`. `--root
+<dir>` restricts results to one specific indexed root — if the given path
+is not among the known roots (`senso status`), the command fails with a
+usage error (exit code 2).
+
+Because filtering reduces the number of results, senso requests an
+expanded pool of candidates from the database whenever a filter is active
+— this ensures that, as long as enough matching chunks exist, `-k`
+results remain after filtering.
 
 #### Output formats
 

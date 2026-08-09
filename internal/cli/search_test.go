@@ -36,6 +36,45 @@ func TestParseSearchArgsDefaults(t *testing.T) {
 	if opts.Semantic {
 		t.Error("Semantic = true, ожидалось false")
 	}
+	if opts.Path != "" {
+		t.Errorf("Path = %q, ожидалась пустая строка", opts.Path)
+	}
+	if opts.Ext != "" {
+		t.Errorf("Ext = %q, ожидалась пустая строка", opts.Ext)
+	}
+	if opts.Exclude != "" {
+		t.Errorf("Exclude = %q, ожидалась пустая строка", opts.Exclude)
+	}
+	if opts.Root != "" {
+		t.Errorf("Root = %q, ожидалась пустая строка", opts.Root)
+	}
+}
+
+// TestParseSearchArgsFilters проверяет, что --path/--ext/--exclude/--root
+// разбираются в соответствующие поля searchOptions.
+func TestParseSearchArgsFilters(t *testing.T) {
+	opts, err := parseSearchArgs([]string{
+		"--path", "internal/**,cmd/*",
+		"--ext", "go,.md",
+		"--exclude", "internal/generated/**",
+		"--root", "/tmp/project",
+		"запрос",
+	})
+	if err != nil {
+		t.Fatalf("parseSearchArgs вернул ошибку: %v", err)
+	}
+	if opts.Path != "internal/**,cmd/*" {
+		t.Errorf("Path = %q, ожидалось %q", opts.Path, "internal/**,cmd/*")
+	}
+	if opts.Ext != "go,.md" {
+		t.Errorf("Ext = %q, ожидалось %q", opts.Ext, "go,.md")
+	}
+	if opts.Exclude != "internal/generated/**" {
+		t.Errorf("Exclude = %q, ожидалось %q", opts.Exclude, "internal/generated/**")
+	}
+	if opts.Root != "/tmp/project" {
+		t.Errorf("Root = %q, ожидалось %q", opts.Root, "/tmp/project")
+	}
 }
 
 func TestParseSearchArgsSemantic(t *testing.T) {
@@ -232,5 +271,68 @@ func TestFuseRRFLimitsToK(t *testing.T) {
 
 	if len(got) != 2 {
 		t.Fatalf("fuseRRF вернул %d результатов, ожидалось 2", len(got))
+	}
+}
+
+// TestSearchPoolSizeWithoutFilter проверяет, что без активных фильтров
+// пул совпадает с k без расширения.
+func TestSearchPoolSizeWithoutFilter(t *testing.T) {
+	f, _ := newResultFilter("", "", "", "", nil)
+	if got := searchPoolSize(10, f); got != 10 {
+		t.Errorf("searchPoolSize(10, неактивный фильтр) = %d, ожидалось 10", got)
+	}
+}
+
+// TestSearchPoolSizeWithFilter проверяет расширение пула при активном
+// фильтре: множитель filterPoolMultiplier и нижняя граница filterPoolMinimum.
+func TestSearchPoolSizeWithFilter(t *testing.T) {
+	f, err := newResultFilter("*.go", "", "", "", nil)
+	if err != nil {
+		t.Fatalf("newResultFilter вернул ошибку: %v", err)
+	}
+
+	if got := searchPoolSize(3, f); got != filterPoolMinimum {
+		t.Errorf("searchPoolSize(3, активный фильтр) = %d, ожидалось %d (нижняя граница)", got, filterPoolMinimum)
+	}
+	if got := searchPoolSize(50, f); got != 50*filterPoolMultiplier {
+		t.Errorf("searchPoolSize(50, активный фильтр) = %d, ожидалось %d", got, 50*filterPoolMultiplier)
+	}
+}
+
+// TestFilterResultsKeepsOrder проверяет, что filterResults сохраняет
+// исходный порядок отфильтрованных результатов.
+func TestFilterResultsKeepsOrder(t *testing.T) {
+	f, err := newResultFilter("", "go", "", "", nil)
+	if err != nil {
+		t.Fatalf("newResultFilter вернул ошибку: %v", err)
+	}
+
+	results := []store.Result{
+		{Path: "/a.go", Seq: 0},
+		{Path: "/b.md", Seq: 0},
+		{Path: "/c.go", Seq: 0},
+	}
+	got := filterResults(results, f)
+
+	want := []string{"/a.go", "/c.go"}
+	if len(got) != len(want) {
+		t.Fatalf("filterResults вернул %d результатов, ожидалось %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].Path != w {
+			t.Errorf("filterResults[%d].Path = %q, ожидалось %q", i, got[i].Path, w)
+		}
+	}
+}
+
+// TestFilterResultsNoopWithoutFilter проверяет, что без активного фильтра
+// filterResults возвращает исходный срез без изменений.
+func TestFilterResultsNoopWithoutFilter(t *testing.T) {
+	f, _ := newResultFilter("", "", "", "", nil)
+	results := []store.Result{{Path: "/a"}, {Path: "/b"}}
+
+	got := filterResults(results, f)
+	if len(got) != len(results) {
+		t.Fatalf("filterResults вернул %d результатов, ожидалось %d", len(got), len(results))
 	}
 }
