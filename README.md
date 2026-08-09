@@ -29,6 +29,20 @@ predictable exit codes.
   `SENSO_LANG`/`LC_ALL`/`LC_MESSAGES`/`LANG` locale, or `SENSO_LANG`
   explicitly (JSON output is unaffected).
 
+## Install
+
+Prebuilt Linux packages and archives for `amd64` and `arm64` are attached to
+every [release](https://github.com/foxzi/senso/releases):
+
+```sh
+sudo dpkg -i senso_<version>_<arch>.deb        # Debian, Ubuntu
+sudo rpm -i senso-<version>-1.<arch>.rpm       # Fedora, RHEL, openSUSE
+tar -xzf senso_<version>_linux_<arch>.tar.gz   # any distribution
+```
+
+Checksums for all files are published in `SHA256SUMS`. To build from source
+instead, see the requirements below.
+
 ## Requirements
 
 - Go (see `go.mod` for the exact version).
@@ -76,8 +90,8 @@ Run `senso <command> --help` for the full list of flags with their defaults.
 
 See detailed usage and architecture docs:
 
-- Russian: [`docs/ru/usage.md`](docs/ru/usage.md), [`docs/ru/architecture.md`](docs/ru/architecture.md)
-- English: [`docs/en/usage.md`](docs/en/usage.md), [`docs/en/architecture.md`](docs/en/architecture.md)
+- Russian: [`docs/ru/usage.md`](docs/ru/usage.md), [`docs/ru/architecture.md`](docs/ru/architecture.md), [`docs/ru/release.md`](docs/ru/release.md)
+- English: [`docs/en/usage.md`](docs/en/usage.md), [`docs/en/architecture.md`](docs/en/architecture.md), [`docs/en/release.md`](docs/en/release.md)
 
 ## Optional semantic search
 
