@@ -61,7 +61,16 @@ jobs:
             -C .. README.md LICENSE docs
 
       - name: install nfpm
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+        env:
+          NFPM_VERSION: 2.47.0
+          # x86_64/arm64 - имена ассетов в релизах nfpm.
+          NFPM_ARCH: ${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}
+        run: |
+          # Готовый бинарник вместо go install: nfpm требует более свежий Go,
+          # чем указан в go.mod, а setup-go выставляет GOTOOLCHAIN=local.
+          url="https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_${NFPM_ARCH}.tar.gz"
+          curl -fsSL "$url" | tar -xz -C /usr/local/bin nfpm
+          nfpm --version
 
       - name: packages
         env:
