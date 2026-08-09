@@ -38,11 +38,24 @@ The database file path is resolved with this priority (see
    `<found directory>/.senso/index.db` is used;
 4. if `.senso` is not found anywhere (only relevant for `index`, which is
    the only command allowed to create the database), `./.senso/index.db`
-   is created relative to the indexed path, and a `.gitignore` with `*`
-   is written inside `.senso` so the index is never committed by accident.
+   is created in the **current working directory**, not next to the
+   indexed path, and a `.gitignore` with `*` is written inside `.senso`
+   so the index is never committed by accident.
+
+The distinction in point 4 matters: running `senso index ./project` from
+your home directory puts the database at `~/.senso/index.db`, not
+`./project/.senso`. This keeps the database visible to later `search` and
+`status` calls, which only walk up the tree looking for `.senso` and never
+look into subdirectories. To avoid any doubt about where the database
+ended up, `index` prints a `database: <path>` line to stderr
+(`база: <путь>` in the Russian locale).
 
 `search`, `status` and `rm` never create the database — if it is not
-found, they fail with exit code 1.
+found, they fail with exit code 1. This also applies to an explicit
+`--db /path/with/a/typo.db`: senso checks that the file exists before
+opening it. Without that check, the SQLite driver would silently create an
+empty database, and instead of a clear "index not found" error you would
+get a search that simply finds nothing.
 
 ## Output language
 
@@ -160,6 +173,20 @@ Human-readable (default): for each result a line
 `path#chunk_number  score`, followed by an indented snippet of text up to
 `--snippet` runes long.
 
+The snippet is not simply cut from the start of the chunk: it is centered
+on the first word that matches the query. The match is found by word
+stem (the same stemming used by search itself), so a query for `payment`
+highlights a window around "paying", and a prefix term like `pay*` matches
+around any word with that prefix. The match is placed roughly a third of
+the window's width from the left edge, so both the preceding context and
+the continuation stay visible. Truncated edges of the snippet are marked
+with an ellipsis.
+
+When no match can be found — for example the matching word ended up in
+a neighboring chunk, or the result came from a semantic search where an
+exact occurrence may not exist at all — the start of the chunk is
+printed, as before.
+
 `--json`: an array of objects shaped like:
 
 ```json
@@ -173,7 +200,9 @@ Human-readable (default): for each result a line
 ]
 ```
 
-Paths are always absolute. If there are no results, an empty array `[]`
+Paths are always absolute. The `text` field is built the same way as the
+snippet in the human-readable output: the same `--snippet` length and the
+same centering on the match. If there are no results, an empty array `[]`
 is printed (valid JSON, not an empty string).
 
 `--paths-only`: a list of unique absolute file paths, one per line, with
@@ -190,6 +219,14 @@ Scores from the two modes are not comparable to each other.
 Prints statistics about the current index: database path, root, mode,
 number of files and chunks, database size, last indexing time, and a
 breakdown by root path.
+
+A single database can contain several independent trees: each `index` run
+adds its path to the list of roots (`meta.roots`), and a root nested
+inside an already known one does not become a separate entry — it is
+absorbed by the ancestor. The `roots` breakdown shows the number of files
+per root; a file is attributed to the longest matching root. Paths that do
+not fall under any known root (usually leftovers from older databases) are
+collected under `(other)` (`(прочее)` in the Russian locale).
 
 Flags:
 
@@ -242,11 +279,34 @@ senso rm ./old-directory
 senso rm ./notes.txt
 ```
 
+Along with the chunks, the command also cleans up the list of indexed
+roots (`meta.roots`, see `senso status`): if the removed path covered
+an entire registered root, that root is dropped from the list —
+otherwise it would linger in `status` with zero files. Roots nested
+inside the removed path are dropped as well; an ancestor root is kept,
+since it may still contain files that were not touched by the removal.
+
 ### `senso version` and `senso help`
 
-`senso version` prints the build version. `senso help` (as well as
-`senso -h`, `senso --help`, and running with no arguments) prints the list
-of commands.
+`senso version` (as well as `senso --version`) prints the build version
+on a single line:
+
+```
+senso v0.1.1 (a1b2c3d, 2026-08-09T12:20:53Z)
+```
+
+The version, commit and date come from ldflags that the `Makefile` sets
+from `git describe`. If the binary was built without them, the values
+are recovered from Go's embedded build info (`debug.ReadBuildInfo`):
+`go install module@version` yields a tag, while a plain working-tree
+build yields `vcs.revision` and `vcs.time`. The commit and date are
+printed in parentheses only when known; when nothing is known at all,
+the output is `senso dev`.
+
+`senso help` (as well as `senso -h`, `senso --help`, and running with no
+arguments) prints the list of commands. Help for a specific command —
+`senso <command> --help` — is assembled from the same flag descriptions
+used by argument parsing, so it can never drift from actual behavior.
 
 ## Using senso in pipelines and with agents
 
