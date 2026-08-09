@@ -154,8 +154,9 @@ Flags:
 | `--paths-only` | `false` | print only unique file paths |
 | `--snippet <n>` | `500` | length of the text snippet in results, in runes |
 | `--semantic` | `false` | search by vectors instead of lexical search (requires an index built with `senso index --embed` and a reachable Ollama) |
-| `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (only relevant with `--semantic`) |
-| `--query-prefix <s>` | `""` | prefix for the search query (only relevant with `--semantic`) |
+| `--hybrid` | `false` | combine lexical and semantic results (same requirements as `--semantic`; cannot be used together with it) |
+| `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (relevant with `--semantic` and `--hybrid`) |
+| `--query-prefix <s>` | `""` | prefix for the search query (relevant with `--semantic` and `--hybrid`) |
 
 Examples:
 
@@ -165,13 +166,21 @@ senso search --k 5 "specific term"
 senso search --json "text" | jq '.[].path'
 senso search --paths-only "text" | xargs -I{} wc -l {}
 senso search --semantic "a query about the meaning, not the words"
+senso search --hybrid "an exact term and its meaning at once"
 ```
 
 #### Output formats
 
 Human-readable (default): for each result a line
-`path#chunk_number  score`, followed by an indented snippet of text up to
-`--snippet` runes long.
+`path#chunk_number  first_line-last_line  score`, followed by an indented
+snippet of text up to `--snippet` runes long. Line numbers refer to the
+source file, so you can jump straight to the place, for example
+`vim +40 path`. Databases built by older versions of senso have no line
+information and the range is omitted — re-index to get it.
+
+The snippet keeps its line breaks: the indent is applied to every line, so
+code indentation and Markdown structure stay readable. Blank lines at the
+edges of the snippet and trailing whitespace are stripped.
 
 The snippet is not simply cut from the start of the chunk: it is centered
 on the first word that matches the query. The match is found by word
@@ -194,13 +203,17 @@ printed, as before.
   {
     "path": "/abs/path/to/file.txt",
     "chunk": 0,
+    "line_start": 40,
+    "line_end": 58,
     "score": 0.478,
     "text": "matched fragment text"
   }
 ]
 ```
 
-Paths are always absolute. The `text` field is built the same way as the
+Paths are always absolute. `line_start` and `line_end` are the first and
+last line of the chunk in the source file (`0` when the database was built
+by an older version of senso). The `text` field is built the same way as the
 snippet in the human-readable output: the same `--snippet` length and the
 same centering on the match. If there are no results, an empty array `[]`
 is printed (valid JSON, not an empty string).
@@ -212,7 +225,10 @@ no duplicates and no scores.
 inverted bm25 (`score = -bm25`, since SQLite returns bm25 as a negative
 number that gets smaller — more negative — for better matches). In
 semantic mode this is cosine similarity (`score = 1 - cosine_distance`).
-Scores from the two modes are not comparable to each other.
+In hybrid mode the score is a Reciprocal Rank Fusion weight: each list
+contributes `1 / (60 + position)` to a document, and the contributions are
+summed, so a document present in both lists outranks one that leads only a
+single list. Scores from different modes are not comparable to each other.
 
 ### `senso status [flags]`
 
@@ -391,6 +407,7 @@ How to enable:
 ```sh
 senso index --embed .                 # build the index with vectors
 senso search --semantic "query"       # search by vectors
+senso search --hybrid "query"         # merge both modes with RRF
 ```
 
 If an index already exists and was built without `--embed` (lexical
@@ -399,8 +416,8 @@ databases where the vector table does not exist yet, senso forces a
 re-index of every file through the embedding model (even if mtime/size
 have not changed), so that every chunk ends up with a vector.
 
-If Ollama is unreachable at the time of `index --embed` or
-`search --semantic`, the command fails (exit code 1) — senso does not
+If Ollama is unreachable at the time of `index --embed`,
+`search --semantic` or `search --hybrid`, the command fails (exit code 1) — senso does not
 silently fall back to lexical-only mode, to avoid creating a partially
 indexed database or unexpectedly returning a different kind of result.
 
@@ -415,9 +432,9 @@ indexed database or unexpectedly returning a different kind of result.
   chunks by rune count (`--chunk-size`/`--overlap`), with no understanding
   of code structure (functions, classes, etc.).
 - Databases created by previous versions of senso are incompatible with
-  the current schema (the schema version is now 2). Any command
+  the current schema (the schema version is now 3). Any command
   (`index`, `search`, `status`, `rm`) refuses to work with such a
   database, exiting with code 1 and a message like "database was created
-  by an incompatible senso version (schema 1, need 2), remove the .senso
+  by an incompatible senso version (schema 2, need 3), remove the .senso
   directory and re-index" — fixed by removing the `.senso` directory and
   re-indexing; there is no on-the-fly schema migration.

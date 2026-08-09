@@ -70,6 +70,8 @@ CREATE TABLE chunks(
   file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
   text TEXT NOT NULL,
+  line_start INTEGER NOT NULL,
+  line_end INTEGER NOT NULL,
   UNIQUE(file_id, seq));
 CREATE INDEX idx_chunks_file ON chunks(file_id);
 
@@ -87,7 +89,7 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
 );
 ```
 
-- `meta` stores the schema version (currently 2), the embedding model and
+- `meta` stores the schema version (currently 3), the embedding model and
   its dimensionality, the index root, and the last indexing time. An empty
   `model`/`dim=0` is a valid state for a purely lexical index. Databases
   created by an older schema version are incompatible: senso refuses to
@@ -96,8 +98,10 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
   `size`, and content hash.
 - `chunks` holds the text fragments produced by the `chunk` package in
   their original (non-stemmed) form — the raw text in `chunks.text` is
-  used for snippets in search results; rows are deleted in cascade when a
-  file is removed (`ON DELETE CASCADE`).
+  used for snippets in search results; `line_start` and `line_end` are the
+  first and last line of the fragment in the source file, computed from
+  byte offsets during splitting and printed in search output; rows are
+  deleted in cascade when a file is removed (`ON DELETE CASCADE`).
 - `fts_chunks` is the virtual FTS5 table used for lexical search. The
   `body` column holds the stemmed text (package `internal/stem`, see
   above), not the raw text — that is what `MATCH` actually searches. The

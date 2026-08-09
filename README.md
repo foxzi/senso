@@ -101,6 +101,7 @@ If you also want semantic (embedding-based) search:
 1. Run a local [Ollama](https://ollama.com) server with an embedding model
    (default: `bge-m3`).
 2. Build the index with embeddings: `senso index --embed .`
-3. Search semantically: `senso search --semantic "query text"`
+3. Search semantically: `senso search --semantic "query text"`, or combine
+   both rankings with `senso search --hybrid "query text"`
 
-Without `--embed`/`--semantic`, Ollama is never contacted.
+Without `--embed`/`--semantic`/`--hybrid`, Ollama is never contacted.

@@ -71,6 +71,8 @@ CREATE TABLE chunks(
   file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
   text TEXT NOT NULL,
+  line_start INTEGER NOT NULL,
+  line_end INTEGER NOT NULL,
   UNIQUE(file_id, seq));
 CREATE INDEX idx_chunks_file ON chunks(file_id);
 
@@ -88,7 +90,7 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
 );
 ```
 
-- `meta` хранит версию схемы (текущая — 2), модель эмбеддингов и её
+- `meta` хранит версию схемы (текущая — 3), модель эмбеддингов и её
   размерность, корень индекса и время последней индексации. Пустая
   `model`/`dim=0` — это корректное состояние для чисто лексического
   индекса. Базы, созданные версией схемы младше текущей, несовместимы:
@@ -98,8 +100,10 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
   известными `mtime`, `size` и хэшем содержимого.
 - `chunks` — фрагменты текста файла, разбитые пакетом `chunk`, в исходном
   (нестеммированном) виде — сырой текст `chunks.text` используется для
-  сниппетов в выдаче поиска; удаляются каскадно при удалении файла
-  (`ON DELETE CASCADE`).
+  сниппетов в выдаче поиска; `line_start` и `line_end` — номера первой и
+  последней строки фрагмента в исходном файле, они считаются при разбиении
+  по байтовым смещениям и печатаются в выдаче поиска; удаляются каскадно
+  при удалении файла (`ON DELETE CASCADE`).
 - `fts_chunks` — виртуальная таблица FTS5 для лексического поиска. В
   колонку `body` пишется не сырой текст, а результат стемминга (пакет
   `internal/stem`, см. выше) — это то, что реально ищется через `MATCH`.
