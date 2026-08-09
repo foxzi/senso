@@ -10,6 +10,7 @@ import (
 
 	"senso/internal/cli"
 	"senso/internal/i18n"
+	"senso/internal/version"
 )
 
 func main() {
@@ -32,8 +33,8 @@ func run(args []string) int {
 	case "help", "-h", "--help":
 		fmt.Print(cli.HelpText())
 		return 0
-	case "version":
-		fmt.Println("senso dev")
+	case "version", "--version":
+		fmt.Println(version.String())
 		return 0
 	case "index":
 		err = cli.RunIndex(rest)
