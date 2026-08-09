@@ -562,7 +562,10 @@ type Result struct {
 	EndLine   int
 }
 
-// Search выполняет KNN-поиск ближайших k чанков к вектору vector.
+// Search выполняет KNN-поиск ближайших k чанков к вектору vector. Тай-брейк
+// по (path, seq) в ORDER BY делает порядок результатов с одинаковым
+// distance детерминированным - без него SQLite не гарантирует стабильный
+// порядок строк с равным значением сортировки.
 func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 	hasVectors, err := s.HasVectors()
 	if err != nil {
@@ -586,7 +589,7 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 		 JOIN chunks c ON c.id = v.chunk_id
 		 JOIN files f ON f.id = c.file_id
 		 WHERE v.embedding MATCH ? AND k = ?
-		 ORDER BY v.distance`,
+		 ORDER BY v.distance, f.path, c.seq`,
 		blob, k,
 	)
 	if err != nil {
@@ -622,7 +625,8 @@ const bm25Weights = "1.0, 0.4, 0.8, 0.0"
 // k наиболее релевантных чанков. Query стеммируется через stem.Query, что
 // обеспечивает совпадение словоформ и поддержку фраз/префиксов. Если запрос
 // оказался пустым (например, состоял только из пунктуации) или ничего не
-// найдено, возвращает пустой срез без ошибки.
+// найдено, возвращает пустой срез без ошибки. Тай-брейк по (path, seq) в
+// ORDER BY делает порядок результатов с одинаковым rank детерминированным.
 func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 	stemmed := stem.Query(query)
 	if stemmed == "" {
@@ -636,7 +640,7 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 		 JOIN chunks c ON c.id = fts_chunks.chunk_id
 		 JOIN files f ON f.id = c.file_id
 		 WHERE fts_chunks MATCH ?
-		 ORDER BY rank
+		 ORDER BY rank, f.path, c.seq
 		 LIMIT ?`,
 		stemmed, k,
 	)

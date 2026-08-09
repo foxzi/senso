@@ -81,7 +81,8 @@
 - **`internal/cli`** — implementation of the subcommands (`index`,
   `search`, `status`, `rm`, `show`): flag parsing, incremental re-index
   decisions, filtering `search` results by
-  `--path`/`--ext`/`--exclude`/`--root`, human-readable and JSON output
+  `--path`/`--ext`/`--exclude`/`--root`, post-processing the result list
+  (`--deduplicate`, `--max-per-file`), human-readable and JSON output
   formatting.
 - **`internal/i18n`** — picks the language of human-readable output
   (`Detect` reads `SENSO_LANG`/`LC_ALL`/`LC_MESSAGES`/`LANG`, `Set`

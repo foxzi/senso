@@ -274,28 +274,52 @@ func TestFuseRRFLimitsToK(t *testing.T) {
 	}
 }
 
-// TestSearchPoolSizeWithoutFilter проверяет, что без активных фильтров
+// TestSearchPoolSizeWithoutFilter проверяет, что без активной постобработки
 // пул совпадает с k без расширения.
 func TestSearchPoolSizeWithoutFilter(t *testing.T) {
-	f, _ := newResultFilter("", "", "", "", nil)
-	if got := searchPoolSize(10, f); got != 10 {
-		t.Errorf("searchPoolSize(10, неактивный фильтр) = %d, ожидалось 10", got)
+	if got := searchPoolSize(10, false); got != 10 {
+		t.Errorf("searchPoolSize(10, false) = %d, ожидалось 10", got)
 	}
 }
 
-// TestSearchPoolSizeWithFilter проверяет расширение пула при активном
-// фильтре: множитель filterPoolMultiplier и нижняя граница filterPoolMinimum.
+// TestSearchPoolSizeWithFilter проверяет расширение пула при активной
+// постобработке: множитель filterPoolMultiplier и нижняя граница
+// filterPoolMinimum.
 func TestSearchPoolSizeWithFilter(t *testing.T) {
-	f, err := newResultFilter("*.go", "", "", "", nil)
+	if got := searchPoolSize(3, true); got != filterPoolMinimum {
+		t.Errorf("searchPoolSize(3, true) = %d, ожидалось %d (нижняя граница)", got, filterPoolMinimum)
+	}
+	if got := searchPoolSize(50, true); got != 50*filterPoolMultiplier {
+		t.Errorf("searchPoolSize(50, true) = %d, ожидалось %d", got, 50*filterPoolMultiplier)
+	}
+}
+
+// TestNeedsExpandedPool проверяет, что needsExpandedPool учитывает как
+// фильтры путей, так и --deduplicate/--max-per-file.
+func TestNeedsExpandedPool(t *testing.T) {
+	noFilter, _ := newResultFilter("", "", "", "", nil)
+	activeFilter, err := newResultFilter("*.go", "", "", "", nil)
 	if err != nil {
 		t.Fatalf("newResultFilter вернул ошибку: %v", err)
 	}
 
-	if got := searchPoolSize(3, f); got != filterPoolMinimum {
-		t.Errorf("searchPoolSize(3, активный фильтр) = %d, ожидалось %d (нижняя граница)", got, filterPoolMinimum)
+	cases := []struct {
+		name   string
+		filter *resultFilter
+		opts   searchOptions
+		want   bool
+	}{
+		{"ничего не активно", noFilter, searchOptions{}, false},
+		{"активен фильтр путей", activeFilter, searchOptions{}, true},
+		{"активен deduplicate", noFilter, searchOptions{Deduplicate: true}, true},
+		{"активен max-per-file", noFilter, searchOptions{MaxPerFile: 2}, true},
 	}
-	if got := searchPoolSize(50, f); got != 50*filterPoolMultiplier {
-		t.Errorf("searchPoolSize(50, активный фильтр) = %d, ожидалось %d", got, 50*filterPoolMultiplier)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := needsExpandedPool(tc.filter, tc.opts); got != tc.want {
+				t.Errorf("needsExpandedPool() = %v, ожидалось %v", got, tc.want)
+			}
+		})
 	}
 }
 

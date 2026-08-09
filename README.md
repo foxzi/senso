@@ -23,6 +23,8 @@ predictable exit codes.
   must be adjacent, but any word form is matched.
 - Result filters for `search`: `--path`, `--ext`, `--exclude`, `--root`,
   usable in lexical, semantic and hybrid modes alike.
+- `--deduplicate` and `--max-per-file` for `search` trim overlapping and
+  overrepresented chunks from the same file out of the results.
 - `show <path>#<chunk>` prints the full text saved in the index for a chunk
   referenced from `search` output, including surrounding chunks with
   `--before`/`--after` — the only way to read the extracted text of binary

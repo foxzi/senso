@@ -35,6 +35,9 @@ type searchOptions struct {
 	Ext     string
 	Exclude string
 	Root    string
+
+	Deduplicate bool
+	MaxPerFile  int
 }
 
 // searchFlagSet создаёт FlagSet подкоманды search, объявляет в opts все её
@@ -61,6 +64,11 @@ func searchFlagSet(opts *searchOptions) *flag.FlagSet {
 	fs.StringVar(&opts.Ext, "ext", "", i18n.T("comma-separated list of file extensions: only results with a matching extension are kept", "список расширений файлов через запятую: остаются только результаты с подходящим расширением"))
 	fs.StringVar(&opts.Exclude, "exclude", "", i18n.T("comma-separated list of glob patterns: results with a matching path are dropped (takes priority over --path)", "список glob-шаблонов через запятую: результаты с подходящим путём отбрасываются (имеет приоритет над --path)"))
 	fs.StringVar(&opts.Root, "root", "", i18n.T("keep only results inside this indexed root (see senso status)", "оставить только результаты внутри этого проиндексированного корня (см. senso status)"))
+	// --deduplicate и --max-per-file - постобработка объединённой выдачи
+	// (после фильтров и, в гибридном режиме, после fuseRRF), см.
+	// postProcessResults в searchdedup.go.
+	fs.BoolVar(&opts.Deduplicate, "deduplicate", false, i18n.T("suppress neighboring overlapping chunks of the same file", "подавлять соседние перекрывающиеся чанки одного файла"))
+	fs.IntVar(&opts.MaxPerFile, "max-per-file", 0, i18n.T("keep at most N results per file, 0 = no limit", "оставить не более N результатов на файл, 0 = без ограничения"))
 	fs.BoolVar(&opts.Semantic, "semantic", false, i18n.T("search by vectors instead of lexical search (requires an index built with senso index --embed, and Ollama available)", "искать по векторам вместо лексического поиска (требует индекса, построенного с senso index --embed, и доступной Ollama)"))
 	// --hybrid объединяет лексический и семантический поиск через RRF (см.
 	// fuseRRF). Score в результатах этого режима - ранг RRF, а не показатель
@@ -100,6 +108,9 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 	}
 	if opts.Semantic && opts.Hybrid {
 		return searchOptions{}, usagef("%s", i18n.T("use either --semantic or --hybrid, not both", "укажите либо --semantic, либо --hybrid, но не оба"))
+	}
+	if opts.MaxPerFile < 0 {
+		return searchOptions{}, usagef("%s", i18n.T("--max-per-file cannot be negative", "--max-per-file не может быть отрицательным"))
 	}
 
 	return opts, nil
@@ -150,22 +161,25 @@ func RunSearch(args []string) error {
 }
 
 // filterPoolMultiplier и filterPoolMinimum задают размер расширенного пула
-// кандидатов, который запрашивается у store, когда активен хотя бы один
-// фильтр результатов (--path/--ext/--exclude/--root). Фильтрация отбрасывает
-// часть кандидатов, поэтому без расширения пула после неё могло бы остаться
-// меньше -k результатов, даже если подходящих чанков в базе достаточно.
-// Множитель 10 - грубая эвристика: типичные фильтры (расширение, поддиректория)
-// не отбрасывают настолько большую долю кандидатов, чтобы пул её не покрыл.
+// кандидатов, который запрашивается у store, когда активна хотя бы одна
+// постобработка результатов - фильтры (--path/--ext/--exclude/--root),
+// --deduplicate или --max-per-file (см. needsExpandedPool). Постобработка
+// отбрасывает часть кандидатов, поэтому без расширения пула после неё
+// могло бы остаться меньше -k результатов, даже если подходящих чанков в
+// базе достаточно. Множитель 10 - грубая эвристика: типичная постобработка
+// (расширение, поддиректория, дедуп соседних чанков) не отбрасывает
+// настолько большую долю кандидатов, чтобы пул её не покрыл.
 const (
 	filterPoolMultiplier = 10
 	filterPoolMinimum    = 100
 )
 
 // searchPoolSize возвращает число кандидатов, которое нужно запросить у
-// store перед фильтрацией: без активных фильтров - ровно k, с фильтрами -
-// расширенный пул (см. filterPoolMultiplier/filterPoolMinimum).
-func searchPoolSize(k int, filter *resultFilter) int {
-	if !filter.Active() {
+// store перед постобработкой результатов: без активной постобработки -
+// ровно k, с ней - расширенный пул (см. filterPoolMultiplier/filterPoolMinimum).
+// expand сообщает, активна ли постобработка - см. needsExpandedPool.
+func searchPoolSize(k int, expand bool) int {
+	if !expand {
 		return k
 	}
 	pool := k * filterPoolMultiplier
@@ -191,15 +205,16 @@ func filterResults(results []store.Result, filter *resultFilter) []store.Result 
 }
 
 // runSearchQuery выбирает режим поиска (lexical/semantic/hybrid) согласно
-// opts и применяет filter к результатам. Гибридный режим фильтрует список
-// каждого источника до fuseRRF (см. searchHybrid), поэтому здесь для него
-// повторная фильтрация не нужна.
+// opts, применяет filter к результатам и затем постобработку - дедуп и
+// --max-per-file (см. postProcessResults в searchdedup.go). Гибридный режим
+// фильтрует список каждого источника до fuseRRF (см. searchHybrid), поэтому
+// здесь для него повторная фильтрация не нужна.
 func runSearchQuery(s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
 	if opts.Hybrid {
 		return searchHybrid(s, opts, filter)
 	}
 
-	pool := searchPoolSize(opts.K, filter)
+	pool := searchPoolSize(opts.K, needsExpandedPool(filter, opts))
 	var results []store.Result
 	var err error
 	if opts.Semantic {
@@ -210,7 +225,7 @@ func runSearchQuery(s *store.Store, opts searchOptions, filter *resultFilter) ([
 	if err != nil {
 		return nil, err
 	}
-	return filterResults(results, filter), nil
+	return postProcessResults(filterResults(results, filter), opts), nil
 }
 
 // searchSemantic выполняет поиск по векторам: проверяет наличие векторов в
@@ -257,16 +272,19 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 // searchHybrid объединяет лексический и семантический поиск с помощью
 // Reciprocal Rank Fusion: у каждого источника запрашивается расширенный пул
 // кандидатов, чтобы слияние не упиралось в то, что итоговые top-K одного
-// метода не пересекаются с top-K другого. При активных фильтрах пул
-// дополнительно расширяется до searchPoolSize (какой из двух пулов больше),
-// а каждый список фильтруется до fuseRRF - иначе RRF тратил бы ранги на
-// кандидатов, которые в любом случае будут отброшены.
+// метода не пересекаются с top-K другого. При активной постобработке
+// (фильтры, --deduplicate, --max-per-file) пул дополнительно расширяется до
+// searchPoolSize (какой из двух пулов больше), а каждый список фильтруется
+// до fuseRRF - иначе RRF тратил бы ранги на кандидатов, которые в любом
+// случае будут отброшены. fuseRRF вызывается с тем же пулом, а не с opts.K,
+// чтобы дедуп и --max-per-file применялись до финального отбора top-K
+// (см. postProcessResults) и не срезали результаты раньше времени.
 func searchHybrid(s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
 	pool := opts.K * 4
 	if pool < 50 {
 		pool = 50
 	}
-	if fp := searchPoolSize(opts.K, filter); fp > pool {
+	if fp := searchPoolSize(opts.K, needsExpandedPool(filter, opts)); fp > pool {
 		pool = fp
 	}
 
@@ -282,7 +300,8 @@ func searchHybrid(s *store.Store, opts searchOptions, filter *resultFilter) ([]s
 	lexical = filterResults(lexical, filter)
 	semantic = filterResults(semantic, filter)
 
-	return fuseRRF([][]store.Result{lexical, semantic}, opts.K), nil
+	fused := fuseRRF([][]store.Result{lexical, semantic}, pool)
+	return postProcessResults(fused, opts), nil
 }
 
 // rrfK - сглаживающая константа Reciprocal Rank Fusion. Значение 60 взято

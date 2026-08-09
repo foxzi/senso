@@ -172,6 +172,8 @@ Flags:
 | `--ext <list>` | `""` | keep only results with one of the comma-separated extensions (with or without leading dot) |
 | `--exclude <glob,...>` | `""` | drop results whose path matches at least one of the comma-separated glob patterns (takes priority over `--path`) |
 | `--root <dir>` | `""` | keep only results inside the given indexed root (see `senso status`) |
+| `--deduplicate` | `false` | suppress neighboring results from the same file with overlapping line ranges |
+| `--max-per-file <n>` | `0` | keep at most `n` results per file, `0` means no limit |
 | `--semantic` | `false` | search by vectors instead of lexical search (requires an index built with `senso index --embed` and a reachable Ollama) |
 | `--hybrid` | `false` | combine lexical and semantic results (same requirements as `--semantic`; cannot be used together with it) |
 | `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (relevant with `--semantic` and `--hybrid`) |
@@ -208,6 +210,27 @@ Because filtering reduces the number of results, senso requests an
 expanded pool of candidates from the database whenever a filter is active
 — this ensures that, as long as enough matching chunks exist, `-k`
 results remain after filtering.
+
+#### `--deduplicate` and `--max-per-file`
+
+Unlike `--path`/`--ext`/`--exclude`/`--root`, these flags do not filter by
+path content — they remove redundancy within the results already found
+for a single file:
+
+- `--deduplicate` suppresses neighboring results from the same file whose
+  line ranges overlap. This is common for long documents, where adjacent
+  chunks overlap because of the `--overlap` value used at `index` time and
+  end up in the results with nearly the same text. Each group of
+  overlapping chunks is reduced to the one with the highest score.
+- `--max-per-file <n>` limits the results to `n` per file (after
+  deduplication, if enabled) — useful when one large file fills the
+  whole results page, crowding out other matching files.
+
+Both flags are applied as post-processing on the already ranked results,
+before the `-k` cutoff, and work in lexical, semantic and hybrid modes.
+Like the regular filters, they increase the candidate pool requested from
+the database so that, after dropping duplicates and excess per-file
+chunks, `-k` results remain.
 
 #### Output formats
 
