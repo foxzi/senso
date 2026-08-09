@@ -1,7 +1,7 @@
 // Package extract извлекает простой текст из офисных документов.
 //
 // Поддерживаются форматы, разбираемые средствами стандартной библиотеки:
-// .docx, .odt, .ods, .xlsx и .epub (zip-контейнер с XML внутри), .rtf
+// .docx, .odt, .ods, .odp, .xlsx, .pptx и .epub (zip-контейнер с XML внутри), .rtf
 // (текстовый формат с управляющими словами), .fb2 (XML) и .ipynb (JSON). Бинарный .doc
 // (Word 97-2003) не поддерживается: это OLE2-контейнер, разбор которого
 // потребовал бы сторонней зависимости.
@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +26,7 @@ import (
 // Решение принимается только по расширению, содержимое не читается.
 func Supports(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".docx", ".odt", ".ods", ".rtf", ".fb2", ".ipynb", ".xlsx", ".epub":
+	case ".docx", ".odt", ".ods", ".odp", ".rtf", ".fb2", ".ipynb", ".xlsx", ".pptx", ".epub":
 		return true
 	}
 	return false
@@ -41,6 +43,8 @@ func Text(name string, data []byte) (string, error) {
 		return odt(data)
 	case ".ods":
 		return ods(data)
+	case ".odp":
+		return odp(data)
 	case ".rtf":
 		return rtf(data)
 	case ".fb2":
@@ -49,6 +53,8 @@ func Text(name string, data []byte) (string, error) {
 		return ipynb(data)
 	case ".xlsx":
 		return xlsx(data)
+	case ".pptx":
+		return pptx(data)
 	case ".epub":
 		return epub(data)
 	}
@@ -95,4 +101,69 @@ func zipNames(z *zip.Reader, keep func(string) bool) []string {
 		}
 	}
 	return out
+}
+
+// sortByNumber упорядочивает имена файлов по числу в имени: слайды и листы
+// нумеруются подряд, и обычная сортировка строк поставила бы десятый перед
+// вторым, перемешав документ.
+func sortByNumber(names []string) {
+	sort.Slice(names, func(i, j int) bool {
+		ni, oki := numberIn(names[i])
+		nj, okj := numberIn(names[j])
+		if oki && okj && ni != nj {
+			return ni < nj
+		}
+		return names[i] < names[j]
+	})
+}
+
+// numberIn достаёт число из конца имени файла: xl/worksheets/sheet12.xml
+// или ppt/slides/slide3.xml.
+func numberIn(name string) (int, bool) {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	i := len(base)
+	for i > 0 && base[i-1] >= '0' && base[i-1] <= '9' {
+		i--
+	}
+	if i == len(base) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(base[i:])
+	return n, err == nil
+}
+
+// collapse приводит извлечённый текст к виду, пригодному для индексации:
+// пробелы внутри строки схлопываются в один, пустые строки убираются.
+// В разметке переводы строк и отступы расставлены произвольно, и без
+// этого текст оказался бы рваным.
+func collapse(s string) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = squeeze(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// squeeze схлопывает подряд идущие пробелы в строке и убирает их по краям.
+// Табуляция сохраняется: ею разделены ячейки таблиц, а пробелы вокруг неё
+// отбрасываются.
+func squeeze(s string) string {
+	var b strings.Builder
+	space := false
+	tab := false
+	for _, r := range s {
+		if r == ' ' || r == '\r' {
+			space = b.Len() > 0
+			continue
+		}
+		if space && !tab && r != '\t' {
+			b.WriteByte(' ')
+		}
+		space = false
+		tab = r == '\t'
+		b.WriteRune(r)
+	}
+	return strings.TrimRight(b.String(), " \t")
 }

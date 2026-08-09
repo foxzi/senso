@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -31,9 +30,8 @@ func xlsx(data []byte) (string, error) {
 		return strings.HasPrefix(n, "xl/worksheets/") && strings.HasSuffix(n, ".xml")
 	})
 	// Порядок листов задан в книге, но для поиска достаточно устойчивого
-	// порядка: имена файлов идут как sheet1, sheet2, ... - сортируем их
-	// с учётом числа, чтобы sheet10 не оказался перед sheet2.
-	sort.Slice(names, func(i, j int) bool { return sheetLess(names[i], names[j]) })
+	// порядка: имена файлов идут как sheet1, sheet2, ...
+	sortByNumber(names)
 
 	var b strings.Builder
 	for _, n := range names {
@@ -213,21 +211,4 @@ func attr(el xml.StartElement, name string) string {
 		}
 	}
 	return ""
-}
-
-// sheetLess сравнивает имена файлов листов по номеру в имени.
-func sheetLess(a, b string) bool {
-	na, oka := sheetNum(a)
-	nb, okb := sheetNum(b)
-	if oka && okb && na != nb {
-		return na < nb
-	}
-	return a < b
-}
-
-// sheetNum достаёт номер листа из имени вида xl/worksheets/sheet12.xml.
-func sheetNum(name string) (int, bool) {
-	s := strings.TrimSuffix(strings.TrimPrefix(name, "xl/worksheets/sheet"), ".xml")
-	n, err := strconv.Atoi(s)
-	return n, err == nil
 }

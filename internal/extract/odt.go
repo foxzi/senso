@@ -24,6 +24,13 @@ func ods(data []byte) (string, error) {
 	return odt(data)
 }
 
+// odp извлекает текст презентации OpenDocument (.odp).
+// Разметка та же, что у .odt: текст слайда лежит в обычных абзацах
+// внутри надписей.
+func odp(data []byte) (string, error) {
+	return odt(data)
+}
+
 // openDocument разбирает разметку OpenDocument и собирает из неё текст.
 //
 // Символьные данные берутся только внутри абзацев text:p и заголовков
@@ -98,6 +105,11 @@ func openDocument(data []byte) (string, error) {
 					b.WriteByte('\t')
 				}
 			case "table-row":
+				b.WriteByte('\n')
+			case "page":
+				// Слайды презентации отделяются друг от друга пустой
+				// строкой: подряд идущий текст разных слайдов связан
+				// между собой слабо.
 				b.WriteByte('\n')
 			}
 		case xml.CharData:

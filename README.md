@@ -21,8 +21,8 @@ predictable exit codes.
   must be adjacent, but any word form is matched.
 - Incremental indexing: unchanged files are skipped by mtime/size, changed
   content is detected by a content hash.
-- Indexes `.docx`, `.odt`, `.ods`, `.xlsx`, `.rtf`, `.fb2`, `.ipynb` and
-  `.epub` documents out of the box — text is extracted with the standard library, no
+- Indexes `.docx`, `.odt`, `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`,
+  `.ipynb` and `.epub` documents out of the box — text is extracted with the standard library, no
   external converters required.
 - Respects `.gitignore` by default (can be disabled).
 - Index is stored in a hidden `.senso` directory, found automatically by

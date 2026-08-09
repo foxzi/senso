@@ -198,21 +198,6 @@ func xhtmlText(data []byte) (string, error) {
 	return collapse(b.String()), nil
 }
 
-// collapse приводит текст главы к виду, пригодному для индексации:
-// пробелы внутри строки схлопываются в один, пустые строки убираются.
-// В разметке переводы строк и отступы расставлены произвольно, и без
-// этого текст оказался бы рваным. Табуляция сохраняется: ею разделены
-// ячейки таблиц.
-func collapse(s string) string {
-	var out []string
-	for _, l := range strings.Split(s, "\n") {
-		if l = squeeze(l); l != "" {
-			out = append(out, l)
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
 // unwrap заменяет пробельное форматирование разметки обычными пробелами.
 // Переводы строк и отступы в книге расставлены как удобно её сборщику;
 // строки и колонки текста задают только теги.
@@ -223,26 +208,4 @@ func unwrap(s string) string {
 		}
 		return r
 	}, s)
-}
-
-// squeeze схлопывает подряд идущие пробелы в строке и убирает их по краям.
-// Табуляция сохраняется: ею разделены ячейки таблиц, а пробелы вокруг неё
-// отбрасываются.
-func squeeze(s string) string {
-	var b strings.Builder
-	space := false
-	tab := false
-	for _, r := range s {
-		if r == ' ' || r == '\r' {
-			space = b.Len() > 0
-			continue
-		}
-		if space && !tab && r != '\t' {
-			b.WriteByte(' ')
-		}
-		space = false
-		tab = r == '\t'
-		b.WriteRune(r)
-	}
-	return strings.TrimRight(b.String(), " \t")
 }

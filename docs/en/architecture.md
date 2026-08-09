@@ -8,15 +8,21 @@
   Cyrillic encoding, detects it and transcodes it. Only UTF-8 ever ends up
   in the index; the original encoding is never stored.
 - **`internal/extract`** — pulls plain text out of the `.docx`, `.odt`,
-  `.ods`, `.xlsx`, `.rtf`, `.fb2`, `.ipynb` and `.epub` document formats
-  using nothing but the standard library. DOCX, ODT and ODS are ZIP
-  archives, so exactly one entry is read from each (`word/document.xml`
+  `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`, `.ipynb` and `.epub`
+  document formats using nothing but the standard library. DOCX, ODT, ODS
+  and ODP are ZIP archives, so exactly one entry is read from each (`word/document.xml`
   and `content.xml` respectively) and parsed with streaming
   `encoding/xml`; in ODS and ODT table cells within a row are joined with
-  a tab, and rows with a newline. XLSX is a ZIP archive too, but cell text
+  a tab, and rows with a newline; ODP reuses the same parser, because a
+  slide is described by ordinary paragraphs inside text frames, and slides
+  are separated from each other by a blank line. XLSX is a ZIP archive too, but cell text
   lives in a shared string table (`xl/sharedStrings.xml`) that sheets
   reference by index, so that table is read first; sheets are visited by
-  the number in their file name, and completely empty rows are skipped. RTF is handled by a small hand-written control-word parser
+  the number in their file name, and completely empty rows are skipped.
+  PPTX keeps every slide in a separate entry (`ppt/slides/slideN.xml`),
+  visited by the number in the file name; only the text of shapes reaches
+  the index, while speaker notes and slide layouts are skipped, since
+  layouts repeat the same boilerplate on every slide. RTF is handled by a small hand-written control-word parser
   that understands groups, `\'hh` escapes with the code page from
   `\ansicpgN`, and `\uN` with `\ucN` replacement characters. FB2 is plain
   XML whose declared encoding (often windows-1251) is transcoded to
