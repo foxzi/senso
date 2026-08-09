@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"senso/internal/extract"
 	"senso/internal/text"
 	"senso/internal/walk"
 )
@@ -114,9 +115,10 @@ func scanFiles(root string, opts indexOptions) ([]string, error) {
 }
 
 // readIndexable читает файл и готовит его содержимое к индексации:
-// пропускает пустые файлы, определяет бинарность, перекодирует
-// однобайтовую кириллицу и приводит текст к NFC. ok=false означает,
-// что файл индексировать не нужно, и это не является ошибкой.
+// пропускает пустые файлы, извлекает текст из офисных документов,
+// определяет бинарность, перекодирует однобайтовую кириллицу и приводит
+// текст к NFC. ok=false означает, что файл индексировать не нужно,
+// и это не является ошибкой.
 func readIndexable(path string, maxBytes int64) ([]byte, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -129,9 +131,24 @@ func readIndexable(path string, maxBytes int64) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
+	if extract.Supports(path) {
+		return extractIndexable(path, data)
+	}
+
 	s, _, ok := text.Decode(data)
 	if !ok {
 		return nil, false, nil
 	}
 	return []byte(s), true, nil
+}
+
+// extractIndexable достаёт текст из офисного документа. Повреждённый файл
+// пропускается так же, как бинарный: индексация продолжается, ошибка наружу
+// не выносится.
+func extractIndexable(path string, data []byte) ([]byte, bool, error) {
+	s, err := extract.Text(path, data)
+	if err != nil || strings.TrimSpace(s) == "" {
+		return nil, false, nil
+	}
+	return []byte(text.Normalize(s)), true, nil
 }
