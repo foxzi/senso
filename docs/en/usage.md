@@ -134,13 +134,15 @@ Indexing always skips the `.senso` service directory, `.git`,
 files (`*.lock`, `*-lock.json`, `*.min.js`, `*.min.css`, `*.map`, `*.svg`)
 — these exclusions cannot be turned off with flags.
 
-Besides plain text files, senso indexes `.docx`, `.odt` and `.rtf` office
-documents: plain text is extracted from them by the standard library
-alone, so no external converters need to be installed. Markup, images and
-metadata are discarded — only the text of paragraphs, lists and tables
-reaches the index, which means line numbers in search results refer to the
-extracted text, not to the original file. The legacy `.doc` format (Word
-97-2003) is not supported; convert such files to `.docx` or `.rtf`.
+Besides plain text files, senso indexes `.docx`, `.odt`, `.ods`, `.rtf`,
+`.fb2` and `.ipynb` documents: plain text is extracted from them by
+the standard library alone, so no external converters need to be
+installed. Markup, images and metadata are discarded — only the text of
+paragraphs, lists and tables reaches the index (for `.ipynb`, the code and
+text of cells, without execution outputs), which means line numbers in
+search results refer to the extracted text, not to the original file. The
+legacy `.doc` format (Word 97-2003) is not supported; convert such files
+to `.docx` or `.rtf`.
 
 ### `senso search [flags] query...`
 
