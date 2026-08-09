@@ -44,6 +44,8 @@ func run(args []string) int {
 		err = cli.RunStatus(rest)
 	case "rm":
 		err = cli.RunRm(rest)
+	case "show":
+		err = cli.RunShow(rest)
 	default:
 		fmt.Fprintf(os.Stderr, i18n.T("senso: unknown command %q\n", "senso: неизвестная команда %q\n"), cmd)
 		return 2

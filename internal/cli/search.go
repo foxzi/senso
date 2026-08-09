@@ -338,16 +338,23 @@ func fuseRRF(lists [][]store.Result, k int) []store.Result {
 	return out
 }
 
-// formatResultHeader форматирует заголовочную строку одного результата:
-// путь с номером чанка через "#", диапазон строк исходного файла и
-// показатель релевантности с тремя знаками после запятой (больше -
-// релевантнее). Если startLine == 0 (данных о строках нет), диапазон не
-// печатается.
-func formatResultHeader(path string, seq, startLine, endLine int, score float64) string {
+// formatChunkRef форматирует ссылку на чанк: путь с номером чанка через "#"
+// и диапазон строк исходного файла. Если startLine == 0 (данных о строках
+// нет), диапазон не печатается. Вынесена из formatResultHeader, чтобы
+// команда show могла использовать тот же формат заголовка без показателя
+// релевантности, который к show не относится.
+func formatChunkRef(path string, seq, startLine, endLine int) string {
 	if startLine == 0 {
-		return fmt.Sprintf("%s#%d  %.3f", path, seq, score)
+		return fmt.Sprintf("%s#%d", path, seq)
 	}
-	return fmt.Sprintf("%s#%d  %d-%d  %.3f", path, seq, startLine, endLine, score)
+	return fmt.Sprintf("%s#%d  %d-%d", path, seq, startLine, endLine)
+}
+
+// formatResultHeader форматирует заголовочную строку одного результата
+// поиска: ссылку на чанк (см. formatChunkRef) и показатель релевантности
+// с тремя знаками после запятой (больше - релевантнее).
+func formatResultHeader(path string, seq, startLine, endLine int, score float64) string {
+	return fmt.Sprintf("%s  %.3f", formatChunkRef(path, seq, startLine, endLine), score)
 }
 
 // printSearchText печатает результаты в человекочитаемом виде: путь

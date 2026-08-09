@@ -804,3 +804,89 @@ func TestSearchLexicalPhraseIgnoresPath(t *testing.T) {
 		t.Errorf("SearchLexical(фраза через путь) вернул %d результатов, ожидалось 0", len(results))
 	}
 }
+
+// TestChunksRange проверяет, что Chunks возвращает ровно чанки из заданного
+// диапазона seq, упорядоченные по возрастанию, независимо от порядка их
+// физической записи.
+func TestChunksRange(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/doc.txt", 1, 10, "hash",
+		chunksOf("chunk 0", "chunk 1", "chunk 2", "chunk 3", "chunk 4"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Chunks("/root/doc.txt", 1, 3)
+	if err != nil {
+		t.Fatalf("Chunks вернул ошибку: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("Chunks вернул %d чанков, ожидалось 3", len(got))
+	}
+	for i, want := range []struct {
+		seq  int
+		text string
+	}{{1, "chunk 1"}, {2, "chunk 2"}, {3, "chunk 3"}} {
+		if got[i].Seq != want.seq || got[i].Text != want.text {
+			t.Errorf("chunk %d = (seq=%d, text=%q), ожидалось (seq=%d, text=%q)", i, got[i].Seq, got[i].Text, want.seq, want.text)
+		}
+	}
+}
+
+// TestChunksOutOfRangeIsNotAnError проверяет, что диапазон, выходящий за
+// границы существующих чанков, просто даёт меньше элементов, а не ошибку.
+func TestChunksOutOfRangeIsNotAnError(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/doc.txt", 1, 10, "hash", chunksOf("chunk 0", "chunk 1"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Chunks("/root/doc.txt", -5, 100)
+	if err != nil {
+		t.Fatalf("Chunks вернул ошибку: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Chunks вернул %d чанков, ожидалось 2 (весь файл)", len(got))
+	}
+
+	got, err = s.Chunks("/root/doc.txt", 5, 10)
+	if err != nil {
+		t.Fatalf("Chunks вернул ошибку: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Chunks вернул %d чанков для диапазона за пределами файла, ожидалось 0", len(got))
+	}
+}
+
+// TestChunksLineRange проверяет, что line_start/line_end чанков доходят
+// до вызывающего кода без изменений.
+func TestChunksLineRange(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/doc.txt", 1, 10, "hash", chunksOf("a", "b"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Chunks("/root/doc.txt", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].StartLine != 1 || got[0].EndLine != 1 {
+		t.Errorf("chunk 0: StartLine=%d EndLine=%d, ожидалось 1, 1", got[0].StartLine, got[0].EndLine)
+	}
+	if got[1].StartLine != 2 || got[1].EndLine != 2 {
+		t.Errorf("chunk 1: StartLine=%d EndLine=%d, ожидалось 2, 2", got[1].StartLine, got[1].EndLine)
+	}
+}
+
+// TestChunksUnknownFile проверяет, что Chunks возвращает понятную ошибку
+// для файла, которого нет в индексе.
+func TestChunksUnknownFile(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	_, err := s.Chunks("/root/missing.txt", 0, 10)
+	if err == nil {
+		t.Fatal("Chunks(несуществующий файл) не вернул ошибку")
+	}
+}

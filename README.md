@@ -23,6 +23,10 @@ predictable exit codes.
   must be adjacent, but any word form is matched.
 - Result filters for `search`: `--path`, `--ext`, `--exclude`, `--root`,
   usable in lexical, semantic and hybrid modes alike.
+- `show <path>#<chunk>` prints the full text saved in the index for a chunk
+  referenced from `search` output, including surrounding chunks with
+  `--before`/`--after` — the only way to read the extracted text of binary
+  formats like `.docx`, `.epub` or `.pptx`.
 - Incremental indexing: unchanged files are skipped by mtime/size, changed
   content is detected by a content hash.
 - Indexes `.docx`, `.odt`, `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`,
@@ -88,12 +92,17 @@ index is never committed by accident.
 |----------|-------------------------------------------------------|
 | `index`  | build or update the index for a directory              |
 | `search` | search the index, text/JSON/paths-only output          |
+| `show`   | print the full saved text of a chunk by its `search` reference |
 | `status` | show index statistics (files, chunks, mode, size)       |
 | `rm`     | remove a file or a subtree from the index (disk untouched) |
 | `version`| print the binary version                               |
 | `help`   | print top-level usage                                   |
 
 Run `senso <command> --help` for the full list of flags with their defaults.
+
+```sh
+senso show --json '/docs/specification.docx#4'  # read the stored chunk text by search reference
+```
 
 See detailed usage and architecture docs:
 

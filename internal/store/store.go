@@ -663,6 +663,79 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 	return results, nil
 }
 
+// Chunks возвращает чанки файла path с seq в диапазоне [fromSeq, toSeq]
+// включительно, упорядоченные по возрастанию seq. Диапазон, выходящий за
+// границы существующих чанков, не ошибка - просто в ответе будет меньше
+// элементов. Используется командой "show" для чтения сохранённого текста
+// по ссылке из выдачи search.
+//
+// Возвращает Result, а не отдельный тип: набор нужных полей (Path, Seq,
+// Text, StartLine, EndLine) у Result уже есть, а Score/Distance просто
+// остаются нулевыми - завести под это единственное отличие новый тип
+// означало бы дублировать структуру ради двух неиспользуемых полей.
+func (s *Store) Chunks(path string, fromSeq, toSeq int) ([]Result, error) {
+	var exists bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM files WHERE path=?)`, path).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.New(i18n.Tf(
+			"store: file %q not found in the index",
+			"store: файл %q не найден в индексе",
+			path,
+		))
+	}
+
+	rows, err := s.db.Query(
+		`SELECT f.path, c.seq, c.text, c.line_start, c.line_end
+		 FROM chunks c
+		 JOIN files f ON f.id = c.file_id
+		 WHERE f.path = ? AND c.seq BETWEEN ? AND ?
+		 ORDER BY c.seq`,
+		path, fromSeq, toSeq,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(i18n.T("store: read chunks: %w", "store: чтение chunks: %w"), err)
+	}
+	defer rows.Close()
+
+	var results []Result
+	for rows.Next() {
+		var r Result
+		if err := rows.Scan(&r.Path, &r.Seq, &r.Text, &r.StartLine, &r.EndLine); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// ChunkSeqRange возвращает наименьший и наибольший номера чанков файла
+// path. found=false означает, что у файла нет чанков (или самого файла нет
+// в индексе). Отдельный запрос вместо чтения всех чанков нужен потому, что
+// диапазон требуется только для текста сообщения об ошибке, а у крупных
+// файлов чанков сотни и тянуть их текст ради двух чисел незачем.
+func (s *Store) ChunkSeqRange(path string) (min, max int, found bool, err error) {
+	var lo, hi sql.NullInt64
+	err = s.db.QueryRow(
+		`SELECT min(c.seq), max(c.seq)
+		 FROM chunks c
+		 JOIN files f ON f.id = c.file_id
+		 WHERE f.path = ?`,
+		path,
+	).Scan(&lo, &hi)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if !lo.Valid || !hi.Valid {
+		return 0, 0, false, nil
+	}
+	return int(lo.Int64), int(hi.Int64), true, nil
+}
+
 // subtreeCondition - условие ограничения путём или поддеревом,
 // используется одинаково во всех методах, работающих с деревом путей.
 const subtreeCondition = `path = ? OR path LIKE ? || '/%'`

@@ -270,6 +270,89 @@ contributes `1 / (60 + position)` to a document, and the contributions are
 summed, so a document present in both lists outranks one that leads only a
 single list. Scores from different modes are not comparable to each other.
 
+### `senso show [flags] <path>#<chunk>`
+
+Prints the full text of a chunk saved in the index, by reference from
+`search` output. `search` prints each result header as
+`path#chunk_number  first_line-last_line  score` — the reference that
+`show` accepts is the part up to the second run of spaces:
+`path#chunk_number`.
+
+The path in the reference can be relative — `show` resolves it to an
+absolute path the same way paths are stored in the index.
+
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--db <file>` | `""` | path to the database file |
+| `--before <n>` | `0` | number of preceding chunks of the same file to include |
+| `--after <n>` | `0` | number of following chunks of the same file to include |
+| `--json` | `false` | print the chunk as JSON |
+
+Examples:
+
+```sh
+senso show --json '/docs/specification.docx#4'
+senso show --json --before 1 --after 2 '/docs/specification.docx#4'
+senso show ./README.md#2
+```
+
+Neighboring chunks added via `--before`/`--after` are not merged into one
+text: each is returned as a separate item, exactly as it is stored in the
+index. Neighboring chunks in the index overlap (see `internal/chunk`), so
+adjacent items show a shared piece of text at the seam — that is not an
+output bug, it is an honest reflection of what is actually stored in the
+database. Unlike the snippet printed by `search --snippet`, the text
+printed by `show` is never truncated.
+
+If the given file has no chunk with the requested number, the command
+exits with code 1, and the error message states the available range of
+chunk numbers for that file.
+
+If the file on disk has changed since the last indexing, or is gone
+entirely, `show` does not block output and does not trigger a re-index:
+it prints the text saved in the index, prints a warning to stderr, and
+exits with code 0. In `--json` the same fact is carried by the `stale`
+field (`true`/`false`) and, when the file is stale, by a `stale_reason`
+field set to `"modified"` (mtime or size changed) or `"missing"` (the
+file is no longer on disk); when `stale` is `false`, `stale_reason` is
+absent from the object.
+
+This is especially useful for formats indexed through `internal/extract`
+(`.docx`, `.odt`, `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`,
+`.ipynb`, `.epub`): the source file for these formats is binary, and
+`show` is the only way for an agent to see the text already extracted
+from it without re-parsing the format itself.
+
+`--json`: an object shaped like:
+
+```json
+{
+  "ref": "/docs/specification.docx#4",
+  "path": "/docs/specification.docx",
+  "chunk": 4,
+  "stale": false,
+  "chunks": [
+    {
+      "ref": "/docs/specification.docx#4",
+      "chunk": 4,
+      "line_start": 120,
+      "line_end": 168,
+      "text": "full chunk text"
+    }
+  ]
+}
+```
+
+Top-level fields: `ref` and `path` are the canonical (absolute) path and
+the requested chunk number, rebuilt from scratch, so `ref` can be passed
+back into `show` unchanged even if the original reference used a relative
+path; `chunk` is the requested number; `stale`/`stale_reason` describe the
+file's freshness (see above); `chunks` is the list of all returned
+chunks, including the neighbors from `--before`/`--after`, each with its
+own `ref`, `chunk`, `line_start`, `line_end` and the full `text`.
+
 ### `senso status [flags]`
 
 Prints statistics about the current index: database path, root, mode,

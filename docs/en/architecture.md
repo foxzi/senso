@@ -70,14 +70,19 @@
 - **`internal/store`** — stores and searches the index in SQLite with the
   sqlite-vec extension: the schema, incremental updates of files and
   chunks, lexical search via FTS5/bm25, and vector search via
-  vec0/cosine distance.
+  vec0/cosine distance. `Chunks(path, fromSeq, toSeq)` returns a file's
+  chunks by sequence range without going through search, and
+  `ChunkSeqRange(path)` returns the file's minimum and maximum chunk
+  number — the `show` subcommand is built on top of these two methods.
 - **`internal/embed`** — an HTTP client to a local Ollama server for
   getting text embeddings, with retries (up to 3 attempts per request).
 - **`internal/vecext`** — wires the sqlite-vec extension into the cgo
   driver `mattn/go-sqlite3` within a single process/connection.
 - **`internal/cli`** — implementation of the subcommands (`index`,
-  `search`, `status`, `rm`): flag parsing, incremental re-index decisions,
-  human-readable and JSON output formatting.
+  `search`, `status`, `rm`, `show`): flag parsing, incremental re-index
+  decisions, filtering `search` results by
+  `--path`/`--ext`/`--exclude`/`--root`, human-readable and JSON output
+  formatting.
 - **`internal/i18n`** — picks the language of human-readable output
   (`Detect` reads `SENSO_LANG`/`LC_ALL`/`LC_MESSAGES`/`LANG`, `Set`
   applies it at startup, `T`/`Tf` pick and format a string). There is no

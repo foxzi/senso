@@ -59,6 +59,15 @@ func rmSummary() string {
 	)
 }
 
+// showUsageLine и showSummary описывают команду show для справки.
+func showUsageLine() string { return "show [flags] <path>#<chunk>" }
+func showSummary() string {
+	return i18n.T(
+		"print a saved chunk from the index by its reference from search results",
+		"показать сохранённый в индексе чанк по ссылке из результатов search",
+	)
+}
+
 // versionUsageLine и versionSummary описывают команду version для справки.
 // У этой команды нет флагов.
 func versionUsageLine() string { return "version" }
@@ -82,6 +91,7 @@ func commandSpecs() []commandSpec {
 		{searchUsageLine(), searchSummary(), searchFlagSet(&searchOptions{})},
 		{statusUsageLine(), statusSummary(), statusFlagSet(&statusOptions{})},
 		{rmUsageLine(), rmSummary(), rmFlagSet(&rmOptions{})},
+		{showUsageLine(), showSummary(), showFlagSet(&showOptions{})},
 		{versionUsageLine(), versionSummary(), nil},
 		{helpUsageLine(), helpSummary(), nil},
 	}
