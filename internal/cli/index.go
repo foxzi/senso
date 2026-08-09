@@ -1,0 +1,349 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
+
+	"senso/internal/chunk"
+	"senso/internal/dbpath"
+	"senso/internal/embed"
+	"senso/internal/store"
+)
+
+// embedBatchSize - максимальное число чанков в одном запросе эмбеддинга.
+const embedBatchSize = 32
+
+// RunIndex реализует подкоманду "index": строит или обновляет индекс для
+// указанного пути.
+func RunIndex(args []string) error {
+	opts, err := parseIndexArgs(args)
+	if err != nil {
+		return err
+	}
+
+	root, err := filepath.Abs(opts.Path)
+	if err != nil {
+		return err
+	}
+
+	dbPath, err := dbpath.Find(opts.DB)
+	if errors.Is(err, dbpath.ErrNotFound) {
+		// Для index отсутствие базы - не ошибка, создаём новую рядом с
+		// индексируемым путём.
+		dbPath, err = dbpath.Create(opts.DB, root)
+	}
+	if err != nil {
+		return err
+	}
+
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	if err := s.CheckSchema(); err != nil {
+		return err
+	}
+
+	// Если meta ещё нет (свежая база), схема не создана и размерность
+	// векторов неизвестна - она станет известна после первого эмбеддинга.
+	// Проверка совпадения модели нужна только при --embed: без него
+	// модель в базе не используется вообще.
+	fresh := true
+	if existingModel, existingDim, metaErr := s.Meta(); metaErr == nil {
+		fresh = false
+		if opts.Embed && existingModel != "" && existingModel != opts.Model {
+			return fmt.Errorf("индекс построен моделью %s (dim %d); удалите .senso/index.db или укажите --model %s", existingModel, existingDim, existingModel)
+		}
+	}
+
+	// Префиксы для эмбеддингов сохраняем в meta безусловно (в том числе
+	// пустые), чтобы повторная индексация с новыми префиксами замещала
+	// старые значения. Пишем сразу, если схема уже существует (!fresh);
+	// для свежей базы это делается ниже, после первого s.Init.
+	if opts.Embed && !fresh {
+		if err := savePrefixes(s, opts); err != nil {
+			return err
+		}
+	}
+
+	// Без --embed индексация полностью локальная: схему создаём сразу,
+	// не дожидаясь эмбеддинга (которого не будет), к Ollama вообще не
+	// обращаемся.
+	if fresh && !opts.Embed {
+		if err := s.Init("", 0, root); err != nil {
+			return err
+		}
+		fresh = false
+	}
+
+	candidates, err := scanFiles(root, opts)
+	if err != nil {
+		return err
+	}
+
+	var client *embed.Client
+	if opts.Embed {
+		client = embed.New(opts.Ollama, opts.Model)
+	}
+
+	// backfill означает, что запрошены эмбеддинги, а векторов в базе пока
+	// нет (индекс раньше строился без --embed) - тогда быстрый путь по
+	// mtime/size отключается на этот запуск, чтобы все файлы прошли через
+	// эмбеддинг. См. комментарий к applyBackfill.
+	var backfill bool
+	if opts.Embed && !fresh {
+		hasVectors, err := s.HasVectors()
+		if err != nil {
+			return err
+		}
+		backfill = !hasVectors
+	}
+
+	// ctx отслеживает только Ctrl+C/SIGTERM между файлами: текущий файл
+	// всегда докатывается до конца, чтобы не оставить индекс в
+	// промежуточном состоянии.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	cwd, _ := os.Getwd()
+	start := time.Now()
+
+	var changed, totalChunks int
+	interrupted := false
+
+	for i, path := range candidates {
+		if ctx.Err() != nil {
+			interrupted = true
+			break
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			// файл исчез между сканированием и обработкой - не считаем
+			// это ошибкой всей команды.
+			continue
+		}
+		curMtime := info.ModTime().UnixNano()
+		curSize := info.Size()
+
+		var dbMtime, dbSize int64
+		var dbHash string
+		var found bool
+		if !fresh {
+			dbMtime, dbSize, dbHash, found, err = s.FileState(path)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Быстрый путь: метаданные совпали, содержимое читать не нужно.
+		// При дозаполнении векторов (backfill) быстрый путь отключаем -
+		// иначе файлы с неизменившимся содержимым никогда не попадут на
+		// эмбеддинг.
+		if found && curMtime == dbMtime && curSize == dbSize && !backfill {
+			continue
+		}
+
+		content, ok, err := readIndexable(path, int64(opts.MaxFileSize)*1024*1024)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		curHash := hashContent(content)
+
+		action := applyBackfill(decideFile(dbMtime, dbSize, dbHash, curMtime, curSize, curHash), backfill)
+		switch action {
+		case actionSkip:
+			continue
+		case actionTouch:
+			if err := s.TouchFile(path, curMtime, curSize); err != nil {
+				return err
+			}
+			changed++
+			continue
+		}
+
+		// actionReindex.
+		chunks := chunk.Split(string(content), opts.ChunkSize, opts.Overlap)
+
+		var vectors [][]float32
+		if opts.Embed && len(chunks) > 0 {
+			// Используем фоновый контекст, а не ctx: если Ctrl+C нажали
+			// во время обработки этого файла, он всё равно должен
+			// завершиться корректно, а прерывание случится перед
+			// следующим файлом.
+			vectors, err = embedAll(context.Background(), client, chunks, opts)
+			if err != nil {
+				return err
+			}
+
+			if fresh {
+				dim := len(vectors[0])
+				if err := s.Init(opts.Model, dim, root); err != nil {
+					return err
+				}
+				fresh = false
+				if err := savePrefixes(s, opts); err != nil {
+					return err
+				}
+			}
+		} else if fresh {
+			// Пустой набор чанков ничего не говорит о размерности
+			// модели, а без схемы сохранить файл нельзя - пропускаем.
+			// (fresh здесь возможен только при --embed: без него схема
+			// уже создана до сканирования файлов.)
+			continue
+		}
+
+		if err := s.ReplaceFile(path, curMtime, curSize, curHash, chunks, vectors); err != nil {
+			return err
+		}
+		changed++
+		totalChunks += len(chunks)
+
+		if !opts.Quiet {
+			fmt.Fprintf(os.Stderr, "[%d/%d] %s (%d chunks)\n", i+1, len(candidates), shortenPath(path, cwd), len(chunks))
+		}
+	}
+
+	if interrupted {
+		return nil
+	}
+
+	deleted := 0
+	if !fresh {
+		if opts.Prune {
+			deleted, err = pruneMissing(s, root)
+			if err != nil {
+				return err
+			}
+		}
+		if err := s.SetIndexedAt(time.Now()); err != nil {
+			return err
+		}
+	}
+
+	if !opts.Quiet {
+		dur := time.Since(start).Round(time.Second)
+		vectorsLabel := "нет"
+		if opts.Embed {
+			vectorsLabel = "да"
+		}
+		fmt.Fprintf(os.Stderr, "готово: %d файлов, %d изменено, %d удалено, %d чанка за %s, векторы: %s\n", len(candidates), changed, deleted, totalChunks, dur, vectorsLabel)
+	}
+
+	return nil
+}
+
+// savePrefixes сохраняет в meta префиксы запроса и документа, заданные при
+// индексации, чтобы "senso search --semantic" мог применять их
+// автоматически, без повторного указания пользователем.
+func savePrefixes(s *store.Store, opts indexOptions) error {
+	if err := s.SetMeta("query_prefix", opts.QueryPrefix); err != nil {
+		return err
+	}
+	return s.SetMeta("doc_prefix", opts.DocPrefix)
+}
+
+// pruneMissing удаляет из индекса файлы поддерева root, отсутствующие на
+// диске. Файлы других корней, хранящиеся в той же базе, не затрагиваются.
+func pruneMissing(s *store.Store, root string) (int, error) {
+	paths, err := s.ListPaths("")
+	if err != nil {
+		return 0, err
+	}
+
+	var missing []string
+	for _, p := range paths {
+		if !prefixInSubtree(p, root) {
+			continue
+		}
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return 0, nil
+	}
+
+	return s.DeleteFiles(missing)
+}
+
+// embedAll получает эмбеддинги для всех чанков одного файла: разбивает их
+// на батчи по embedBatchSize штук и обрабатывает до opts.Concurrency
+// батчей параллельно. Результат нормализован по L2 и сохраняет порядок
+// исходных чанков.
+func embedAll(ctx context.Context, client *embed.Client, chunks []string, opts indexOptions) ([][]float32, error) {
+	prefixed := make([]string, len(chunks))
+	for i, c := range chunks {
+		prefixed[i] = opts.DocPrefix + c
+	}
+	batches := batchStrings(prefixed, embedBatchSize)
+
+	results := make([][][]float32, len(batches))
+	errs := make([]error, len(batches))
+
+	sem := make(chan struct{}, opts.Concurrency)
+	var wg sync.WaitGroup
+	for i, batch := range batches {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, batch []string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			vecs, err := client.Embed(ctx, batch)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			results[i] = vecs
+		}(i, batch)
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			return nil, fmt.Errorf("не удалось получить эмбеддинги от Ollama (%s, модель %s): %w", opts.Ollama, opts.Model, err)
+		}
+	}
+
+	vectors := make([][]float32, 0, len(prefixed))
+	for i, vecs := range results {
+		if len(vecs) != len(batches[i]) {
+			return nil, fmt.Errorf("Ollama вернула %d векторов для %d текстов", len(vecs), len(batches[i]))
+		}
+		for _, v := range vecs {
+			embed.Normalize(v)
+			vectors = append(vectors, v)
+		}
+	}
+	return vectors, nil
+}
+
+// batchStrings разбивает items на последовательные подсрезы длиной не
+// более size элементов, сохраняя порядок.
+func batchStrings(items []string, size int) [][]string {
+	if len(items) == 0 {
+		return nil
+	}
+	var batches [][]string
+	for i := 0; i < len(items); i += size {
+		end := i + size
+		if end > len(items) {
+			end = len(items)
+		}
+		batches = append(batches, items[i:end])
+	}
+	return batches
+}
