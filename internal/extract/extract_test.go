@@ -8,16 +8,27 @@ import (
 
 // buildZip собирает в памяти zip-архив с единственной записью entry,
 // содержащей data. Используется вместо бинарных фикстур на диске.
+// buildZip собирает zip-архив из одного файла.
 func buildZip(t *testing.T, entry string, data string) []byte {
+	t.Helper()
+	return buildZipFiles(t, [][2]string{{entry, data}})
+}
+
+// buildZipFiles собирает zip-архив из нескольких файлов, сохраняя порядок:
+// разбор некоторых форматов от него зависит.
+func buildZipFiles(t *testing.T, files [][2]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	f, err := w.Create(entry)
-	if err != nil {
-		t.Fatalf("создание записи %q: %v", entry, err)
-	}
-	if _, err := f.Write([]byte(data)); err != nil {
-		t.Fatalf("запись данных в %q: %v", entry, err)
+	for _, f := range files {
+		name, data := f[0], f[1]
+		e, err := w.Create(name)
+		if err != nil {
+			t.Fatalf("создание записи %q: %v", name, err)
+		}
+		if _, err := e.Write([]byte(data)); err != nil {
+			t.Fatalf("запись данных в %q: %v", name, err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		t.Fatalf("закрытие архива: %v", err)

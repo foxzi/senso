@@ -8,19 +8,28 @@
   Cyrillic encoding, detects it and transcodes it. Only UTF-8 ever ends up
   in the index; the original encoding is never stored.
 - **`internal/extract`** — pulls plain text out of the `.docx`, `.odt`,
-  `.ods`, `.rtf`, `.fb2` and `.ipynb` document formats using nothing but
-  the standard library. DOCX, ODT and ODS are ZIP archives, so exactly
-  one entry is read from each (`word/document.xml` and `content.xml`
-  respectively) and parsed with streaming `encoding/xml`; in ODS and ODT
-  table cells within a row are joined with a tab, and rows with a
-  newline. RTF is handled by a small hand-written control-word parser
+  `.ods`, `.xlsx`, `.rtf`, `.fb2`, `.ipynb` and `.epub` document formats
+  using nothing but the standard library. DOCX, ODT and ODS are ZIP
+  archives, so exactly one entry is read from each (`word/document.xml`
+  and `content.xml` respectively) and parsed with streaming
+  `encoding/xml`; in ODS and ODT table cells within a row are joined with
+  a tab, and rows with a newline. XLSX is a ZIP archive too, but cell text
+  lives in a shared string table (`xl/sharedStrings.xml`) that sheets
+  reference by index, so that table is read first; sheets are visited by
+  the number in their file name, and completely empty rows are skipped. RTF is handled by a small hand-written control-word parser
   that understands groups, `\'hh` escapes with the code page from
   `\ansicpgN`, and `\uN` with `\ucN` replacement characters. FB2 is plain
   XML whose declared encoding (often windows-1251) is transcoded to
   UTF-8 first; metadata (`description`) and base64 images are excluded
   from the index. IPYNB is JSON; only the code and text of cells (the
   `source` field) is read, and execution outputs (`outputs`) are
-  discarded. The `.doc` format (Word 97-2003) is deliberately
+  discarded. EPUB is a ZIP archive whose chapter order is defined
+  indirectly: `META-INF/container.xml` points at the package document
+  (OPF), whose `manifest` maps identifiers to files and whose `spine`
+  lists them in reading order; chapters are read in exactly that order,
+  the table of contents is skipped, and chapter markup is parsed by a
+  non-strict decoder because it is frequently not well-formed XML.
+  The `.doc` format (Word 97-2003) is deliberately
   unsupported: it would require an OLE2 container and piece table
   reader, which is out of proportion with the rest of the package.
 - **`internal/chunk`** — splits normalized document text into fragments of
