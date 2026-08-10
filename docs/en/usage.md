@@ -107,6 +107,8 @@ Flags:
 | `--ext <list>` | `""` | comma-separated list of file extensions (empty = any) |
 | `--exclude <list>` | `""` | comma-separated list of glob exclusion patterns |
 | `--no-gitignore` | `false` | do not honor `.gitignore` |
+| `--hidden` | `false` | index hidden files and directories |
+| `--include-hidden <list>` | `""` | comma-separated list of glob patterns to selectively include hidden paths and secret files |
 | `--chunk-size <n>` | `1200` | chunk size in runes |
 | `--overlap <n>` | `150` | chunk overlap in runes |
 | `--query-prefix <s>` | `""` | prefix for search queries (only relevant with `--embed`) |
@@ -130,9 +132,41 @@ senso index --embed .               # + vector embeddings via Ollama
 ```
 
 Indexing always skips the `.senso` service directory, `.git`,
-`node_modules`, `vendor` and any hidden directory, as well as "noisy"
-files (`*.lock`, `*-lock.json`, `*.min.js`, `*.min.css`, `*.map`, `*.svg`)
-— these exclusions cannot be turned off with flags.
+`node_modules`, `vendor`, as well as "noisy" files (`*.lock`,
+`*-lock.json`, `*.min.js`, `*.min.css`, `*.map`, `*.svg`) — this
+exclusion cannot be turned off with any flag.
+
+Hidden files and directories (name starting with a dot), as well as
+secret files (`.env`, `.env.*`, `*.env`, `*.pem`, `*.key`, `*.p12`,
+`*.pfx`, `*.jks`, `*.keystore`, `*.ppk`, `id_rsa`, `id_dsa`,
+`id_ecdsa`, `id_ed25519`, `.netrc`, `.pgpass`, `.npmrc`, `.htpasswd`,
+`.git-credentials`, `credentials`, `credentials.json`,
+`secrets.json`, `secrets.yaml`, `secrets.yml`), are excluded from
+the index by default. This is a behavior change: previously only
+hidden directories were excluded by default, while hidden files
+(for example `.env`, `.editorconfig`, `.gitignore`) were indexed.
+
+The `--hidden` flag enables indexing of hidden files and
+directories, but does not open `.git` or `.senso` and does not
+include secret files. The `--include-hidden <list>` flag
+selectively includes the given comma-separated glob patterns of
+hidden paths and secret files (also without opening `.git` or
+`.senso`) and works independently of `--hidden`. A pattern is
+matched both against the path relative to the indexing root and
+against the file name: for example, `.github/**` includes the
+whole subtree, while `.env` includes files with that name at any
+depth.
+
+```sh
+senso index --include-hidden '.github/**,.agents/**' .
+senso index --hidden .
+senso index --hidden --include-hidden '.env' .
+```
+
+Warning: `--hidden` can pull sensitive data from hidden directories
+into the index (the secrets list only protects by file name), so
+for project configuration directories the targeted
+`--include-hidden` is preferable.
 
 Besides plain text files, senso indexes `.docx`, `.odt`, `.ods`, `.odp`,
 `.xlsx`, `.pptx`, `.rtf`, `.fb2`, `.ipynb` and `.epub` documents: plain text is extracted

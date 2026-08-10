@@ -22,6 +22,16 @@ type Options struct {
 	Exclude      []string // glob-шаблоны относительно корня обхода
 	MaxFileSize  int64    // 0 = без ограничения
 	UseGitignore bool
+
+	// Hidden включает скрытые файлы и каталоги (имя начинается с точки).
+	// На жёстко исключённые каталоги (.git, .senso) и на файлы с
+	// учётными данными не действует.
+	Hidden bool
+
+	// IncludeHidden - glob-шаблоны точечного включения скрытых путей и
+	// файлов с учётными данными. Действуют даже без Hidden, но не
+	// открывают жёстко исключённые каталоги.
+	IncludeHidden []string
 }
 
 // File описывает один подходящий по фильтрам файл.
@@ -32,11 +42,8 @@ type File struct {
 	MTime int64 // unix
 }
 
-// alwaysExcludedFiles - шаблоны файлов, которые исключаются всегда,
-// даже если они текстовые и проходят по остальным фильтрам.
-var alwaysExcludedFiles = []string{
-	"*.lock", "*-lock.json", "*.min.js", "*.min.css", "*.map", "*.svg",
-}
+// alwaysExcludedFiles, secretFilePatterns и правила скрытых путей описаны
+// в exclude.go.
 
 // Walk обходит дерево root и вызывает fn для каждого подходящего файла.
 // Ошибки чтения отдельных файлов не прерывают обход: они передаются
@@ -76,9 +83,21 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 			return nil
 		}
 
+		rel, err := filepath.Rel(rootAbs, path)
+		if err != nil {
+			reportErr(path, err)
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		name := d.Name()
+
 		if d.IsDir() {
 			if path != rootAbs {
-				if isAlwaysExcludedDir(d.Name()) {
+				if isHardExcludedDir(name) || isVendorDir(name) {
+					return fs.SkipDir
+				}
+				if isHiddenName(name) && !opts.Hidden &&
+					!dirMayContainIncluded(opts.IncludeHidden, rel, name) {
 					return fs.SkipDir
 				}
 				if opts.UseGitignore && isIgnored(matchers, rootAbs, filepath.Dir(path), path) {
@@ -101,10 +120,21 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 		if excludedByGlob(rootAbs, path, opts.Exclude) {
 			return nil
 		}
-		if matchesAny(alwaysExcludedFiles, d.Name()) {
+		if isNoisyName(name) {
 			return nil
 		}
-		if len(extSet) > 0 && !extSet[normalizeExt(filepath.Ext(d.Name()))] {
+		// Скрытые файлы и файлы с учётными данными открываются только
+		// явно: --hidden действует на скрытые, но не на секреты, а
+		// точечный шаблон --include-hidden - на то и другое.
+		if !includedByGlob(opts.IncludeHidden, rel, name) {
+			if isHiddenName(name) && !opts.Hidden {
+				return nil
+			}
+			if isSecretName(name) {
+				return nil
+			}
+		}
+		if len(extSet) > 0 && !extSet[normalizeExt(filepath.Ext(name))] {
 			return nil
 		}
 
@@ -120,15 +150,9 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 			return nil
 		}
 
-		rel, err := filepath.Rel(rootAbs, path)
-		if err != nil {
-			reportErr(path, err)
-			return nil
-		}
-
 		f := File{
 			Path:  filepath.Clean(path),
-			Rel:   filepath.ToSlash(rel),
+			Rel:   rel,
 			Size:  info.Size(),
 			MTime: info.ModTime().Unix(),
 		}
@@ -136,20 +160,6 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 	}
 
 	return filepath.WalkDir(rootAbs, walkFn)
-}
-
-// isAlwaysExcludedDir сообщает, что директория с таким именем никогда
-// не обходится: скрытые директории (начинаются с точки) и служебные
-// каталоги зависимостей/индекса.
-func isAlwaysExcludedDir(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	switch name {
-	case "node_modules", "vendor":
-		return true
-	}
-	return false
 }
 
 // excludedByGlob проверяет путь на совпадение с одним из пользовательских

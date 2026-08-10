@@ -15,21 +15,23 @@ import (
 type indexOptions struct {
 	Path string
 
-	DB          string
-	Embed       bool
-	Model       string
-	Ext         string
-	Exclude     string
-	NoGitignore bool
-	ChunkSize   int
-	Overlap     int
-	QueryPrefix string
-	DocPrefix   string
-	MaxFileSize int
-	Concurrency int
-	Prune       bool
-	Ollama      string
-	Quiet       bool
+	DB            string
+	Embed         bool
+	Model         string
+	Ext           string
+	Exclude       string
+	NoGitignore   bool
+	Hidden        bool
+	IncludeHidden string
+	ChunkSize     int
+	Overlap       int
+	QueryPrefix   string
+	DocPrefix     string
+	MaxFileSize   int
+	Concurrency   int
+	Prune         bool
+	Ollama        string
+	Quiet         bool
 }
 
 // indexFlagSet создаёт FlagSet подкоманды index, объявляет в opts все её
@@ -50,6 +52,8 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	fs.StringVar(&opts.Ext, "ext", "", i18n.T("comma-separated list of file extensions", "список расширений файлов через запятую"))
 	fs.StringVar(&opts.Exclude, "exclude", "", i18n.T("comma-separated list of exclusion glob patterns", "список glob-шаблонов исключений через запятую"))
 	fs.BoolVar(&opts.NoGitignore, "no-gitignore", false, i18n.T("ignore .gitignore", "не учитывать .gitignore"))
+	fs.BoolVar(&opts.Hidden, "hidden", false, i18n.T("index hidden files and directories (.git and .senso stay excluded; secrets such as .env are not included)", "индексировать скрытые файлы и каталоги (.git и .senso остаются исключёнными; секреты вида .env не включаются)"))
+	fs.StringVar(&opts.IncludeHidden, "include-hidden", "", i18n.T("comma-separated glob patterns of hidden or secret paths to index, for example '.github/**,.agents/**'", "список glob-шаблонов скрытых или секретных путей для индексации через запятую, например '.github/**,.agents/**'"))
 	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
 	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))
@@ -150,43 +154,6 @@ func matchesExt(name string, exts []string) bool {
 		if strings.EqualFold(ext, e) {
 			return true
 		}
-	}
-	return false
-}
-
-// isNoisyName сообщает, является ли имя файла "шумным" - такие файлы
-// исключаются из индексации всегда, даже если они текстовые.
-func isNoisyName(name string) bool {
-	base := strings.ToLower(filepath.Base(name))
-
-	patterns := []string{
-		"*.lock",
-		"*-lock.json",
-		"*.min.js",
-		"*.min.css",
-		"*.map",
-		"*.svg",
-	}
-	for _, p := range patterns {
-		if ok, _ := filepath.Match(p, base); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// alwaysExcludedDir сообщает, исключается ли директория с данным именем
-// всегда: служебные каталоги senso, .git, node_modules, vendor и любая
-// скрытая директория (кроме самого текущего каталога ".").
-func alwaysExcludedDir(name string) bool {
-	switch name {
-	case ".senso", ".git", "node_modules", "vendor":
-		return true
-	case ".":
-		return false
-	}
-	if strings.HasPrefix(name, ".") {
-		return true
 	}
 	return false
 }

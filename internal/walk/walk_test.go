@@ -124,9 +124,10 @@ func TestWalkGitignoreRoot(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "ignored.txt"), "should be ignored")
 	mustWrite(t, filepath.Join(root, "keep.txt"), "kept content")
 
+	// Сам .gitignore скрытый, поэтому в индекс не попадает.
 	got := collect(t, root, Options{UseGitignore: true})
 
-	assertEqual(t, got, []string{".gitignore", "keep.txt"})
+	assertEqual(t, got, []string{"keep.txt"})
 }
 
 func TestWalkGitignoreNestedAppliesOnlyToSubtree(t *testing.T) {
@@ -138,7 +139,7 @@ func TestWalkGitignoreNestedAppliesOnlyToSubtree(t *testing.T) {
 
 	got := collect(t, root, Options{UseGitignore: true})
 
-	assertEqual(t, got, []string{"local.txt", "sub/.gitignore", "sub/keep.txt"})
+	assertEqual(t, got, []string{"local.txt", "sub/keep.txt"})
 }
 
 func TestWalkGitignoreDisabled(t *testing.T) {
@@ -148,7 +149,7 @@ func TestWalkGitignoreDisabled(t *testing.T) {
 
 	got := collect(t, root, Options{UseGitignore: false})
 
-	assertEqual(t, got, []string{".gitignore", "ignored.txt"})
+	assertEqual(t, got, []string{"ignored.txt"})
 }
 
 func TestWalkSymlinkToParentDoesNotLoop(t *testing.T) {
@@ -181,4 +182,74 @@ func assertEqual(t *testing.T, got, want []string) {
 			t.Fatalf("получено %v, ожидалось %v", got, want)
 		}
 	}
+}
+
+func TestWalkSkipsHiddenFilesByDefault(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".env"), "SECRET_TOKEN=abcdef")
+	mustWrite(t, filepath.Join(root, ".editorconfig"), "root = true")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{})
+
+	assertEqual(t, got, []string{"main.go"})
+}
+
+func TestWalkHiddenIncludesHiddenPathsButNotSecrets(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".github", "workflows", "ci.yml"), "name: ci")
+	mustWrite(t, filepath.Join(root, ".editorconfig"), "root = true")
+	mustWrite(t, filepath.Join(root, ".env"), "SECRET_TOKEN=abcdef")
+	mustWrite(t, filepath.Join(root, ".env.local"), "SECRET_TOKEN=local")
+	mustWrite(t, filepath.Join(root, "deploy", "server.pem"), "PRIVATE KEY")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{Hidden: true})
+
+	assertEqual(t, got, []string{".editorconfig", ".github/workflows/ci.yml", "main.go"})
+}
+
+func TestWalkHiddenKeepsHardExcludedDirs(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".git", "config"), "git config content")
+	mustWrite(t, filepath.Join(root, ".senso", "index.db"), "db content")
+	mustWrite(t, filepath.Join(root, ".github", "ci.yml"), "name: ci")
+
+	got := collect(t, root, Options{Hidden: true})
+
+	assertEqual(t, got, []string{".github/ci.yml"})
+}
+
+func TestWalkIncludeHiddenOpensSubtreeOnly(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".github", "workflows", "ci.yml"), "name: ci")
+	mustWrite(t, filepath.Join(root, ".agents", "notes.md"), "agent notes")
+	mustWrite(t, filepath.Join(root, ".editorconfig"), "root = true")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{IncludeHidden: []string{".github/**"}})
+
+	assertEqual(t, got, []string{".github/workflows/ci.yml", "main.go"})
+}
+
+func TestWalkIncludeHiddenOpensSecretExplicitly(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".env"), "SECRET_TOKEN=abcdef")
+	mustWrite(t, filepath.Join(root, ".env.local"), "SECRET_TOKEN=local")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{IncludeHidden: []string{".env"}})
+
+	assertEqual(t, got, []string{".env", "main.go"})
+}
+
+func TestWalkSecretsExcludedWithoutGitignore(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "config", "database.key"), "private key")
+	mustWrite(t, filepath.Join(root, "config", "id_rsa"), "private key")
+	mustWrite(t, filepath.Join(root, "config", "app.yaml"), "app: 1")
+
+	got := collect(t, root, Options{})
+
+	assertEqual(t, got, []string{"config/app.yaml"})
 }

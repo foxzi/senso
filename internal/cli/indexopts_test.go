@@ -185,60 +185,6 @@ func TestMatchesExt(t *testing.T) {
 	}
 }
 
-func TestIsNoisyName(t *testing.T) {
-	cases := []struct {
-		name string
-		file string
-		want bool
-	}{
-		{"package-lock.json", "package-lock.json", true},
-		{"yarn.lock", "yarn.lock", true},
-		{"app.min.js", "app.min.js", true},
-		{"style.min.css", "style.min.css", true},
-		{"source map", "bundle.js.map", true},
-		{"svg", "icon.svg", true},
-		{"регистр не важен", "APP.MIN.JS", true},
-		{"обычный js", "normal.js", false},
-		{"обычный текст", "readme.md", false},
-		{"go файл", "main.go", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := isNoisyName(tc.file)
-			if got != tc.want {
-				t.Errorf("isNoisyName(%q) = %v, хотим %v", tc.file, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestAlwaysExcludedDir(t *testing.T) {
-	cases := []struct {
-		name string
-		dir  string
-		want bool
-	}{
-		{".git", ".git", true},
-		{"node_modules", "node_modules", true},
-		{"vendor", "vendor", true},
-		{".senso", ".senso", true},
-		{"скрытая директория", ".hidden", true},
-		{"обычная директория", "src", false},
-		{"текущий каталог", ".", false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := alwaysExcludedDir(tc.dir)
-			if got != tc.want {
-				t.Errorf("alwaysExcludedDir(%q) = %v, хотим %v", tc.dir, got, tc.want)
-			}
-		})
-	}
-}
-
-// equalStrSlices сравнивает два срез строк поэлементно.
 func equalStrSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

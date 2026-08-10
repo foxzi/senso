@@ -75,10 +75,12 @@ func prefixInSubtree(absPath, absRoot string) bool {
 // из разобранных опций команды index.
 func buildWalkOptions(opts indexOptions, root string) walk.Options {
 	return walk.Options{
-		Ext:          normalizeExts(splitList(opts.Ext)),
-		Exclude:      splitList(opts.Exclude),
-		MaxFileSize:  int64(opts.MaxFileSize) * 1024 * 1024,
-		UseGitignore: !opts.NoGitignore,
+		Ext:           normalizeExts(splitList(opts.Ext)),
+		Exclude:       splitList(opts.Exclude),
+		MaxFileSize:   int64(opts.MaxFileSize) * 1024 * 1024,
+		UseGitignore:  !opts.NoGitignore,
+		Hidden:        opts.Hidden,
+		IncludeHidden: splitList(opts.IncludeHidden),
 	}
 }
 
@@ -88,21 +90,10 @@ func buildWalkOptions(opts indexOptions, root string) walk.Options {
 func scanFiles(root string, opts indexOptions) ([]string, error) {
 	walkOpts := buildWalkOptions(opts, root)
 
+	// Все правила исключений (скрытые пути, секреты, шум, служебные
+	// каталоги) живут в пакете walk - единственном месте, где они заданы.
 	var result []string
 	err := walk.Walk(root, walkOpts, func(f walk.File) error {
-		// walk уже исключает служебные директории и шумные файлы, но
-		// у него нет хука для директорий на стороне вызывающего кода,
-		// поэтому дублируем проверку здесь как защиту от изменений
-		// в правилах walk.
-		if isNoisyName(f.Path) {
-			return nil
-		}
-		segments := strings.Split(f.Rel, "/")
-		for _, seg := range segments[:len(segments)-1] {
-			if alwaysExcludedDir(seg) {
-				return nil
-			}
-		}
 		result = append(result, text.Normalize(f.Path))
 		return nil
 	}, nil)
