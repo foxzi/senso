@@ -914,6 +914,69 @@ themselves (an unknown flag, an unknown `--format` value) are reported only
 on stderr with exit code `2`: at that point the output format is not yet
 known.
 
+## Using senso from a local AI agent
+
+senso is built for an agent with a limited context window: instead of reading
+the whole repository it gets a short list of places where the answer is
+likely, and pulls the text in portions.
+
+The recommended loop is `search` -> `show` -> read the file:
+
+```sh
+# 1. Is the index fresh? Exit code 3 means "out of date", so re-index.
+senso check --quiet || senso index --quiet .
+
+# 2. Find the places that may hold the answer. json-v2 gives refs for show.
+senso search --format json-v2 --k 5 --deduplicate --max-per-file 2 \
+  "how is the result rank computed" > hits.json
+
+# 3. Read the promising chunks in full, with neighbors for context.
+jq -r '.results[].ref' hits.json | while read -r ref; do
+  senso show --before 1 --after 1 "$ref"
+done
+
+# 4. Only if the chunks were not enough - open the whole file.
+jq -r '.results[0].path' hits.json
+```
+
+Why this order:
+
+- step 2 is cheap and narrows the field down to a few chunks;
+  `--deduplicate` and `--max-per-file` keep a single file from taking over
+  the whole result list;
+- in `search` output the text is cut to `--snippet` (in `json-v2` the
+  `truncated` field says so), while `show` prints the chunk in full — there
+  is no need to read the file from disk just to get the same text;
+- for `.docx`, `.epub`, `.pptx` and other extracted formats
+  (`source_type: "extracted"`) `show` is the only way to get the text at
+  all: the agent cannot read such a file itself;
+- reading the whole file stays the last step, for when the full code is
+  needed — `path` and `line_start` from the results say where to look.
+
+What to do with the `warnings` field in `json-v2`:
+
+| Code | Meaning | What the agent should do |
+|---|---|---|
+| `file_modified` | the file changed after indexing | the chunk text may be stale: read the file from disk or re-index |
+| `file_missing` | the file is gone from disk | the result points at a deleted file, ignore it and re-index (`senso index --prune`) |
+
+Other things worth knowing:
+
+- the default mode is lexical, and for identifiers, file names and exact
+  terms it usually beats semantic search: `senso search "ReplaceFile"` finds
+  `replace_file` and `replace-file` too;
+- a question phrased in your own words is better served by `--hybrid`
+  (requires an index built with `--embed`): lexical and vector results are
+  fused, so wording that does not match the text literally still lands on
+  the right chunk;
+- when the area of interest is known up front, narrowing it with filters
+  (`--path`, `--ext`, `--exclude`, `--root`) is cheaper than raising `--k`;
+- for an exhaustive sweep instead of ranking there is
+  `senso search --format paths ... | xargs grep -n`;
+- errors should be told apart by code, not by text: the exit code (`1`, `2`,
+  `3`) and the `error.code` field in `json-v2` are stable, while messages
+  are translated and may change.
+
 ## Multilingual support
 
 FTS5 is configured with the `unicode61 remove_diacritics 2` tokenizer and

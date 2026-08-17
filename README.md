@@ -111,6 +111,11 @@ senso show --json '/docs/specification.docx#4'  # read the stored chunk text by 
 senso check --quiet || senso index .            # reindex only when the index is out of date
 ```
 
+The recommended loop for an AI agent is `search` -> `show` -> read the file,
+described in "Using senso from a local AI agent"
+([ru](docs/ru/usage.md#использование-из-локального-ии-агента),
+[en](docs/en/usage.md#using-senso-from-a-local-ai-agent)).
+
 See detailed usage and architecture docs:
 
 - Russian: [`docs/ru/usage.md`](docs/ru/usage.md), [`docs/ru/architecture.md`](docs/ru/architecture.md), [`docs/ru/release.md`](docs/ru/release.md)
