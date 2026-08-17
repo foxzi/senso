@@ -60,6 +60,27 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// OpenReadOnly открывает существующую базу без права записи: SQLite сам
+// отклонит любую попытку изменения, поэтому диагностические команды
+// физически не могут повредить индекс. Файл должен существовать - режим
+// mode=ro не создаёт базу.
+func OpenReadOnly(path string) (*Store, error) {
+	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+
+	// journal_mode и synchronous в режиме только чтения задать нельзя -
+	// это запись в саму базу; foreign_keys живёт в соединении и безопасен.
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: PRAGMA foreign_keys=ON: %w", err)
+	}
+
+	return &Store{db: db}, nil
+}
+
 // Close закрывает соединение с базой данных.
 func (s *Store) Close() error {
 	return s.db.Close()
@@ -768,6 +789,42 @@ func (s *Store) ListPaths(prefix string) ([]string, error) {
 		paths = append(paths, p)
 	}
 	return paths, rows.Err()
+}
+
+// FileMeta - сохранённое в индексе состояние файла.
+type FileMeta struct {
+	MTime int64
+	Size  int64
+	Hash  string
+}
+
+// FileStates возвращает состояние всех проиндексированных файлов поддерева
+// prefix одним запросом. Пустой prefix означает всю базу. Нужен проверке
+// свежести индекса, где вызов FileState на каждый файл дал бы слишком
+// много запросов.
+func (s *Store) FileStates(prefix string) (map[string]FileMeta, error) {
+	var rows *sql.Rows
+	var err error
+	if prefix == "" {
+		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files`)
+	} else {
+		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files WHERE `+subtreeCondition, prefix, prefix)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	states := make(map[string]FileMeta)
+	for rows.Next() {
+		var path string
+		var m FileMeta
+		if err := rows.Scan(&path, &m.MTime, &m.Size, &m.Hash); err != nil {
+			return nil, err
+		}
+		states[path] = m
+	}
+	return states, rows.Err()
 }
 
 // DeleteFiles удаляет перечисленные файлы вместе с их чанками и векторами.

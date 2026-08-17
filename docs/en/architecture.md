@@ -233,6 +233,19 @@ Vector backfill is handled separately (`applyBackfill`): if
 model and gets a vector, even if the file content has not changed since
 the last purely lexical indexing run.
 
+`senso check` reuses the same `decideFile` logic: it compares the list of
+files on disk (with the same selection rules as `index`) against the state
+of the index, but writes nothing — the database is opened through
+`store.OpenReadOnly` in SQLite `mode=ro`, so diagnostics physically cannot
+corrupt the index. By default `check` reads no file contents and compares
+only `mtime`/`size`; `--hash` extends the comparison to the content hash so
+that a file rewritten with the same text is not reported as changed. The
+state of every file in the subtree is read in a single query
+(`store.FileStates`) rather than per file, because the check needs the whole
+list at once: a file present in the index but missing from the current
+selection is either a deletion on disk or a newly applied exclusion rule,
+and telling those apart requires comparing sets.
+
 Tree walk, file read and document parsing errors no longer make a file
 silently disappear from the result: each such error is collected into
 the indexing report (the `failed` field, `--strict` and `--report-json`

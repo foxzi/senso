@@ -39,6 +39,24 @@ type indexOptions struct {
 	ReportJSON    bool
 }
 
+// addSelectionFlags объявляет флаги, определяющие, какие файлы попадают в
+// работу: путь к базе и фильтры обхода дерева. Общие для
+// index и check - проверка свежести должна применять ровно те же правила
+// отбора, что и индексация, иначе она видела бы другой набор файлов.
+func addSelectionFlags(fs *flag.FlagSet, opts *indexOptions) {
+	fs.StringVar(&opts.DB, "db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
+	fs.StringVar(&opts.Ext, "ext", "", i18n.T("comma-separated list of file extensions", "список расширений файлов через запятую"))
+	fs.StringVar(&opts.Exclude, "exclude", "", i18n.T("comma-separated list of exclusion glob patterns", "список glob-шаблонов исключений через запятую"))
+	fs.BoolVar(&opts.NoGitignore, "no-gitignore", false, i18n.T("ignore .gitignore", "не учитывать .gitignore"))
+	fs.BoolVar(&opts.Hidden, "hidden", false, i18n.T("index hidden files and directories (.git and .senso stay excluded; secrets such as .env are not included)", "индексировать скрытые файлы и каталоги (.git и .senso остаются исключёнными; секреты вида .env не включаются)"))
+	fs.StringVar(&opts.IncludeHidden, "include-hidden", "", i18n.T("comma-separated glob patterns of hidden or secret paths to index, for example '.github/**,.agents/**'", "список glob-шаблонов скрытых или секретных путей для индексации через запятую, например '.github/**,.agents/**'"))
+	fs.BoolVar(&opts.Noisy, "noisy", false, i18n.T("index machine-generated files too: lock files, minified bundles, source maps, SVG", "индексировать и машинно-генерируемые файлы: lock-файлы, минифицированные бандлы, source maps, SVG"))
+	fs.StringVar(&opts.IncludeNoisy, "include-noisy", "", i18n.T("comma-separated glob patterns of machine-generated files to index, for example 'poetry.lock,icons/**.svg'", "список glob-шаблонов машинно-генерируемых файлов для индексации через запятую, например 'poetry.lock,icons/**.svg'"))
+	fs.StringVar(&opts.NoisyPatterns, "noisy-patterns", "", i18n.T("comma-separated glob patterns that replace the built-in list of machine-generated files", "список glob-шаблонов через запятую, заменяющий встроенный список машинно-генерируемых файлов"))
+	fs.IntVar(&opts.MaxFileSize, "max-file-size", 10, i18n.T("maximum file size in MB", "максимальный размер файла в МБ"))
+	fs.BoolVar(&opts.Quiet, "quiet", false, i18n.T("do not print progress and summary", "не выводить прогресс и сводку"))
+}
+
 // indexFlagSet создаёт FlagSet подкоманды index, объявляет в opts все её
 // флаги и возвращает FlagSet без вызова Parse. Используется как при разборе
 // аргументов, так и при построении текста справки - это единственное место,
@@ -51,28 +69,18 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 
 	fs := flag.NewFlagSet("index", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&opts.DB, "db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
+	addSelectionFlags(fs, opts)
 	fs.BoolVar(&opts.Embed, "embed", false, i18n.T("build vector embeddings via Ollama (without this flag indexing is fully local and lexical, Ollama is not required)", "строить векторные эмбеддинги через Ollama (без флага индексация полностью локальная, лексическая, Ollama не требуется)"))
 	fs.StringVar(&opts.Model, "model", "bge-m3", i18n.T("embedding model in Ollama (only applies with --embed)", "модель эмбеддингов в Ollama (действует только с --embed)"))
-	fs.StringVar(&opts.Ext, "ext", "", i18n.T("comma-separated list of file extensions", "список расширений файлов через запятую"))
-	fs.StringVar(&opts.Exclude, "exclude", "", i18n.T("comma-separated list of exclusion glob patterns", "список glob-шаблонов исключений через запятую"))
-	fs.BoolVar(&opts.NoGitignore, "no-gitignore", false, i18n.T("ignore .gitignore", "не учитывать .gitignore"))
-	fs.BoolVar(&opts.Hidden, "hidden", false, i18n.T("index hidden files and directories (.git and .senso stay excluded; secrets such as .env are not included)", "индексировать скрытые файлы и каталоги (.git и .senso остаются исключёнными; секреты вида .env не включаются)"))
-	fs.StringVar(&opts.IncludeHidden, "include-hidden", "", i18n.T("comma-separated glob patterns of hidden or secret paths to index, for example '.github/**,.agents/**'", "список glob-шаблонов скрытых или секретных путей для индексации через запятую, например '.github/**,.agents/**'"))
-	fs.BoolVar(&opts.Noisy, "noisy", false, i18n.T("index machine-generated files too: lock files, minified bundles, source maps, SVG", "индексировать и машинно-генерируемые файлы: lock-файлы, минифицированные бандлы, source maps, SVG"))
-	fs.StringVar(&opts.IncludeNoisy, "include-noisy", "", i18n.T("comma-separated glob patterns of machine-generated files to index, for example 'poetry.lock,icons/**.svg'", "список glob-шаблонов машинно-генерируемых файлов для индексации через запятую, например 'poetry.lock,icons/**.svg'"))
-	fs.StringVar(&opts.NoisyPatterns, "noisy-patterns", "", i18n.T("comma-separated glob patterns that replace the built-in list of machine-generated files", "список glob-шаблонов через запятую, заменяющий встроенный список машинно-генерируемых файлов"))
 	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
 	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))
 	fs.StringVar(&opts.DocPrefix, "doc-prefix", "", i18n.T("prefix for documents during indexing (only applies with --embed)", "префикс для документов при индексации (действует только с --embed)"))
-	fs.IntVar(&opts.MaxFileSize, "max-file-size", 10, i18n.T("maximum file size in MB", "максимальный размер файла в МБ"))
 	fs.IntVar(&opts.Concurrency, "concurrency", 4, i18n.T("number of parallel embedding workers (only applies with --embed)", "число параллельных обработчиков эмбеддинга (действует только с --embed)"))
 	fs.BoolVar(&opts.Prune, "prune", true, i18n.T("remove files missing from disk from the index", "удалять из индекса файлы, отсутствующие на диске"))
 	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --embed)", "адрес сервера Ollama (действует только с --embed)"))
 	fs.BoolVar(&opts.Strict, "strict", false, i18n.T("exit with a non-zero code if any file failed to be read or parsed", "завершаться ненулевым кодом, если какой-то файл не удалось прочитать или разобрать"))
 	fs.BoolVar(&opts.ReportJSON, "report-json", false, i18n.T("print a machine-readable indexing report to stdout", "вывести машинный отчёт об индексации в stdout"))
-	fs.BoolVar(&opts.Quiet, "quiet", false, i18n.T("do not print progress", "не выводить прогресс"))
 	return fs
 }
 

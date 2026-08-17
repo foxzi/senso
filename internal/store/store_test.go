@@ -890,3 +890,87 @@ func TestChunksUnknownFile(t *testing.T) {
 		t.Fatal("Chunks(несуществующий файл) не вернул ошибку")
 	}
 }
+
+func TestFileStatesReturnsSavedMetadata(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+
+	if err := s.ReplaceFile("/root/a.txt", 111, 5, "h1", chunksOf("alpha"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFile("/root/sub/b.txt", 222, 7, "h2", chunksOf("beta"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFile("/other/c.txt", 333, 9, "h3", chunksOf("gamma"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.FileStates("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Errorf("FileStates(\"\") returned %d files, want 3", len(all))
+	}
+	want := FileMeta{MTime: 111, Size: 5, Hash: "h1"}
+	if all["/root/a.txt"] != want {
+		t.Errorf("state = %+v, want %+v", all["/root/a.txt"], want)
+	}
+
+	// Поддерево ограничивает выборку по границам сегментов пути.
+	sub, err := s.FileStates("/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sub) != 2 {
+		t.Errorf("FileStates(\"/root\") returned %d files, want 2", len(sub))
+	}
+	if _, ok := sub["/other/c.txt"]; ok {
+		t.Error("FileStates must not return files outside the subtree")
+	}
+}
+
+func TestOpenReadOnlyRejectsWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Init("", 0, "/root"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceFile("/root/a.txt", 1, 1, "h", chunksOf("alpha"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ro, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+
+	if err := ro.CheckSchema(); err != nil {
+		t.Errorf("CheckSchema on a read-only store: %v", err)
+	}
+	states, err := ro.FileStates("")
+	if err != nil {
+		t.Fatalf("FileStates on a read-only store: %v", err)
+	}
+	if len(states) != 1 {
+		t.Errorf("FileStates returned %d files, want 1", len(states))
+	}
+	if _, err := ro.DeleteFiles([]string{"/root/a.txt"}); err == nil {
+		t.Error("a read-only store must reject writes")
+	}
+}
+
+func TestOpenReadOnlyMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nope.db")
+	s, err := OpenReadOnly(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("OpenReadOnly must fail when the database file does not exist")
+	}
+}

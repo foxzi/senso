@@ -120,7 +120,7 @@ Flags:
 | `--concurrency <n>` | `4` | number of parallel embedding workers (only relevant with `--embed`) |
 | `--prune` | `true` | remove files from the index that no longer exist on disk |
 | `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (only relevant with `--embed`) |
-| `--quiet` | `false` | suppress progress output |
+| `--quiet` | `false` | do not print progress and summary |
 | `--strict` | `false` | exit with code 1 if at least one file could not be read or parsed (the report is still printed either way) |
 | `--report-json` | `false` | print a machine-readable indexing report as a single line of JSON to stdout |
 
@@ -542,6 +542,93 @@ shows the same information as a localized `mode: lexical only` /
 `mode: lexical and semantic` line (English by default, Russian if the
 output language is Russian — see "Output language" above).
 
+### `senso check [flags] [path]`
+
+Answers a single question: does the tree need reindexing? The command is
+read-only — the database is opened in read-only mode, so a check
+physically cannot modify the index.
+
+`check` applies exactly the same file selection rules as `index`
+(`--ext`, `--exclude`, `--hidden`, `--noisy`, `.gitignore`,
+`--max-file-size` and the rest), compares the resulting list with the
+contents of the index and splits the differences into categories:
+
+- `changed` — the file is in the index but changed on disk;
+- `missing` — the file is in the index but is gone from disk;
+- `unindexed` — the file passes the filters but is not in the index yet;
+- `excluded` — the file is both in the index and on disk, but the current
+  selection rules no longer accept it (for example `--ext` changed);
+- `issues` — indexing parameter mismatches that a plain `senso index`
+  will not fix.
+
+If the selection flags differ from the ones used for indexing, some files
+will honestly land in `unindexed` or `excluded` — that is not an error but
+the answer to "what would happen if I indexed with these flags".
+
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--db <file>` | `""` | path to the database file |
+| `--hash` | `false` | compare contents by hash instead of mtime and size |
+| `--json` | `false` | print the result as JSON |
+| `--quiet` | `false` | do not print the human-readable summary |
+
+The remaining file selection flags are the same as for `index` (see the
+`senso index` flag table above).
+
+By default a file counts as changed when its modification time or size
+differs: that is fast and reads no contents. With `--hash`, a metadata
+difference triggers a content comparison, so a file rewritten with the
+same text (`touch`, `git checkout`, reinstalled dependencies) is not
+reported as changed. The decision is made by the same function that
+indexing uses, so `check` cannot disagree with `index` about a file.
+
+Exit codes: `0` — the index is up to date; `3` — the index is out of date;
+`1` — the check itself failed (for example a corrupted database); `2` —
+argument parsing error. The dedicated code `3` exists so that an agent can
+tell "time to reindex" from "the check broke".
+
+```sh
+$ senso check
+index is out of date: 1 changed, 0 missing, 2 unindexed, 0 newly excluded
+last indexed: 2026-08-17T21:21:44+03:00
+database: .senso/index.db
+```
+
+`--json` prints a single JSON line with these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `fresh` | bool | the index fully matches disk and parameters |
+| `mode` | string | how contents were compared: `mtime` or `hash` |
+| `scanned` | number | files on disk that passed the selection rules |
+| `unchanged` | number | files matching the index |
+| `changed` | number | indexed files that changed on disk |
+| `missing` | number | files in the index that are gone from disk |
+| `unindexed` | number | files on disk that are not indexed yet |
+| `excluded` | number | indexed files that no longer pass the filters |
+| `issues` | array | objects `{code, message}`; always present, empty as `[]` |
+| `failed` | array | objects `{path, code, message}` for files whose state could not be checked |
+| `indexed_at` | string | time of the last indexing run |
+| `model` | string | embedding model of the index (empty for lexical) |
+| `vectors` | bool | the index contains vectors |
+| `database` | string | path to the database file (empty when no database was found) |
+
+Codes in `issues`: `no_index` (no index database found — every discovered
+file counts as `unindexed`), `model_mismatch` (the index was built with a
+different embedding model, checked only with `--embed`), `vectors_missing`
+(`--embed` was requested but the index has no vectors).
+
+Files in `failed` (possible only with `--hash`; the codes match `index`:
+`read_failed`, `walk_failed`) do not make the index stale on their own:
+nothing is simply known about such a file.
+
+```sh
+$ senso check --json --quiet
+{"fresh":false,"mode":"mtime","scanned":3,"unchanged":2,"changed":1,"missing":0,"unindexed":0,"excluded":0,"issues":[],"failed":[],"indexed_at":"2026-08-17T21:21:44+03:00","model":"","vectors":false,"database":"/tmp/w/.senso/index.db"}
+```
+
 ### `senso rm <path>`
 
 Removes a file or an entire subtree from the index by the given path.
@@ -603,6 +690,12 @@ senso search --paths-only "TODO" | xargs grep -n "TODO"
 
 # Index stats as JSON for monitoring
 senso status --json | jq '.files, .chunks'
+
+# Reindex only when the index is out of date (exit code 3 means stale)
+senso check --quiet || senso index .
+
+# Inspect what exactly diverged, for the agent to decide
+senso check --json --quiet | jq '{changed, missing, unindexed, excluded}'
 ```
 
 `--json` and `--paths-only` do not mix results with progress logs:

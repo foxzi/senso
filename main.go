@@ -42,6 +42,8 @@ func run(args []string) int {
 		err = cli.RunSearch(rest)
 	case "status":
 		err = cli.RunStatus(rest)
+	case "check":
+		err = cli.RunCheck(rest)
 	case "rm":
 		err = cli.RunRm(rest)
 	case "show":

@@ -50,6 +50,15 @@ func statusSummary() string {
 	)
 }
 
+// checkUsageLine и checkSummary описывают команду check для справки.
+func checkUsageLine() string { return "check [flags] [path]" }
+func checkSummary() string {
+	return i18n.T(
+		"check whether the index is up to date (exit code 3 if it is not)",
+		"проверить, актуален ли индекс (код возврата 3, если нет)",
+	)
+}
+
 // rmUsageLine и rmSummary описывают команду rm для справки.
 func rmUsageLine() string { return "rm [flags] <path>" }
 func rmSummary() string {
@@ -90,6 +99,7 @@ func commandSpecs() []commandSpec {
 		{indexUsageLine(), indexSummary(), indexFlagSet(&indexOptions{})},
 		{searchUsageLine(), searchSummary(), searchFlagSet(&searchOptions{})},
 		{statusUsageLine(), statusSummary(), statusFlagSet(&statusOptions{})},
+		{checkUsageLine(), checkSummary(), checkFlagSet(&checkOptions{})},
 		{rmUsageLine(), rmSummary(), rmFlagSet(&rmOptions{})},
 		{showUsageLine(), showSummary(), showFlagSet(&showOptions{})},
 		{versionUsageLine(), versionSummary(), nil},

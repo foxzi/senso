@@ -96,6 +96,7 @@ index is never committed by accident.
 | `search` | search the index, text/JSON/paths-only output          |
 | `show`   | print the full saved text of a chunk by its `search` reference |
 | `status` | show index statistics (files, chunks, mode, size)       |
+| `check`  | check whether the index is up to date (exit code 3 if not) |
 | `rm`     | remove a file or a subtree from the index (disk untouched) |
 | `version`| print the binary version                               |
 | `help`   | print top-level usage                                   |
@@ -104,6 +105,7 @@ Run `senso <command> --help` for the full list of flags with their defaults.
 
 ```sh
 senso show --json '/docs/specification.docx#4'  # read the stored chunk text by search reference
+senso check --quiet || senso index .            # reindex only when the index is out of date
 ```
 
 See detailed usage and architecture docs:
