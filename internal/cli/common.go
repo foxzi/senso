@@ -67,9 +67,10 @@ func shortenPath(abs, cwd string) string {
 
 // errIndexNotFound - ошибка «индекс не найден», единая для случая, когда
 // .senso не найдена поиском вверх по дереву, и для случая, когда указанный
-// явно файл базы не существует.
+// явно файл базы не существует. Несёт машиночитаемый код errCodeNoIndex
+// (см. errcode.go).
 func errIndexNotFound() error {
-	return errors.New(i18n.T("index not found: run senso index <path>", "индекс не найден: запустите senso index <путь>"))
+	return withCode(errCodeNoIndex, errors.New(i18n.T("index not found: run senso index <path>", "индекс не найден: запустите senso index <путь>")))
 }
 
 // openStore находит и открывает базу данных senso по флагу --db.

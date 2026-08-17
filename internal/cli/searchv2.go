@@ -254,3 +254,36 @@ func printSearchJSONV2(s *store.Store, results []store.Result, opts searchOption
 	fmt.Fprintln(os.Stdout, string(data))
 	return nil
 }
+
+// searchErrorResponseV2 - ответ формата json-v2, когда поиск не удался.
+// Схема та же, что у успешного ответа, поэтому агент разбирает stdout
+// одинаково и смотрит на наличие поля error.
+type searchErrorResponseV2 struct {
+	Schema int           `json:"schema"`
+	Error  searchErrorV2 `json:"error"`
+}
+
+// searchErrorV2 - машиночитаемый код ошибки и её человекочитаемое
+// сообщение. Коды перечислены в errcode.go.
+type searchErrorV2 struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// printSearchErrorJSONV2 печатает ошибку поиска в stdout как объект
+// json-v2. Человекочитаемое сообщение об ошибке всё равно уходит в stderr
+// (это делает main), поэтому stdout остаётся строго машинным.
+func printSearchErrorJSONV2(err error) error {
+	data, marshalErr := json.MarshalIndent(searchErrorResponseV2{
+		Schema: searchSchemaV2,
+		Error: searchErrorV2{
+			Code:    errorCode(err),
+			Message: err.Error(),
+		},
+	}, "", "  ")
+	if marshalErr != nil {
+		return marshalErr
+	}
+	fmt.Fprintln(os.Stdout, string(data))
+	return nil
+}

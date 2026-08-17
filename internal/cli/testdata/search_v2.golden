@@ -1,0 +1,44 @@
+{
+  "schema": 2,
+  "mode": "hybrid",
+  "query": "chunk text",
+  "filters": {
+    "k": 2,
+    "path": [
+      "**/*.txt"
+    ],
+    "ext": [
+      ".txt"
+    ],
+    "max_per_file": 2
+  },
+  "results": [
+    {
+      "ref": "{FILE}#0",
+      "path": "{FILE}",
+      "chunk": 0,
+      "line_start": 1,
+      "line_end": 1,
+      "rank": 1,
+      "score": 0.032,
+      "score_kind": "rrf",
+      "text": "chunk text 0",
+      "truncated": false,
+      "source_type": "text"
+    },
+    {
+      "ref": "{FILE}#3",
+      "path": "{FILE}",
+      "chunk": 3,
+      "line_start": 4,
+      "line_end": 4,
+      "rank": 2,
+      "score": 0.016,
+      "score_kind": "rrf",
+      "text": "chunk text 3",
+      "truncated": false,
+      "source_type": "text"
+    }
+  ],
+  "warnings": []
+}

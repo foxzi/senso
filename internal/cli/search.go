@@ -136,6 +136,19 @@ func RunSearch(args []string) error {
 		return err
 	}
 
+	err = runSearch(opts)
+	if err != nil && opts.outputFormat() == formatJSONV2 {
+		// В машинном формате и ошибка машинная: агент читает stdout и
+		// получает стабильный код, а не разбирает текст из stderr.
+		// Ошибку самой печати игнорируем - вернуть надо исходную,
+		// человекочитаемое сообщение всё равно напечатает main.
+		_ = printSearchErrorJSONV2(err)
+	}
+	return err
+}
+
+// runSearch выполняет поиск и печатает результат в выбранном формате.
+func runSearch(opts searchOptions) error {
 	s, _, err := openStore(opts.DB)
 	if err != nil {
 		return err
@@ -276,7 +289,7 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 		return nil, err
 	}
 	if !hasVectors {
-		return nil, errors.New(i18n.T("no vectors in the database: run \"senso index --embed\" to build them", "в базе нет векторов: запустите \"senso index --embed\" для их построения"))
+		return nil, withCode(errCodeNoVectors, errors.New(i18n.T("no vectors in the database: run \"senso index --embed\" to build them", "в базе нет векторов: запустите \"senso index --embed\" для их построения")))
 	}
 
 	model, _, err := s.Meta()
@@ -296,10 +309,10 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 	queryText := text.Normalize(queryPrefix + opts.Query)
 	vectors, err := client.Embed(context.Background(), []string{queryText})
 	if err != nil {
-		return nil, fmt.Errorf(i18n.T("failed to get query embedding from ollama (%s, model %s): %w", "не удалось получить эмбеддинг запроса от Ollama (%s, модель %s): %w"), opts.Ollama, model, err)
+		return nil, withCode(errCodeEmbedFailed, fmt.Errorf(i18n.T("failed to get query embedding from ollama (%s, model %s): %w", "не удалось получить эмбеддинг запроса от Ollama (%s, модель %s): %w"), opts.Ollama, model, err))
 	}
 	if len(vectors) != 1 {
-		return nil, fmt.Errorf(i18n.T("ollama returned %d vectors for 1 query", "Ollama вернула %d векторов для 1 запроса"), len(vectors))
+		return nil, withCode(errCodeEmbedFailed, fmt.Errorf(i18n.T("ollama returned %d vectors for 1 query", "Ollama вернула %d векторов для 1 запроса"), len(vectors)))
 	}
 	vector := vectors[0]
 	embed.Normalize(vector)

@@ -814,6 +814,60 @@ senso check --json --quiet | jq '{changed, missing, unindexed, excluded}'
 `index` progress goes to stderr, while `search`/`status --json` results go
 to stdout, which makes it easy to redirect them separately.
 
+### Output streams
+
+One rule, the same for every command:
+
+- **stdout** — the result of the command only: search results, `status`
+  JSON, `check --json`, `index --report-json`, chunk text from `show`;
+- **stderr** — everything auxiliary: indexing progress, warnings (for
+  example about a stale file in `show`), human-readable summaries and error
+  messages.
+
+That is why `senso search --format json-v2 ... > result.json` always
+produces a file that parses as JSON, while diagnostics can be inspected
+separately or dropped with `2>/dev/null`.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | success |
+| `1` | runtime failure: index not found, database error, unreachable Ollama, indexing error |
+| `2` | invalid command-line arguments |
+| `3` | `check`: the index is out of date (an answer, not a failure) |
+| `130` | interrupted by a signal (Ctrl+C) |
+
+### Error codes of `search --format json-v2`
+
+When the search fails, `search --format json-v2` prints an object with the
+same schema and an `error` field to stdout, while the human-readable
+message still goes to stderr:
+
+```json
+{
+  "schema": 2,
+  "error": {
+    "code": "no_vectors",
+    "message": "no vectors in the database: run \"senso index --embed\" to build them"
+  }
+}
+```
+
+| Code | Meaning |
+|---|---|
+| `usage` | an argument error detected after flag parsing (for example an unknown `--root`) |
+| `no_index` | the senso database was not found |
+| `no_vectors` | the database has no vectors, so `--semantic` and `--hybrid` are impossible |
+| `embed_failed` | failed to get the query embedding from Ollama |
+| `internal` | any other failure: SQLite, I/O, a corrupted database |
+
+The code is the contract: the `message` text may change and is translated
+into the user's language, the code stays the same. Flag parsing errors
+themselves (an unknown flag, an unknown `--format` value) are reported only
+on stderr with exit code `2`: at that point the output format is not yet
+known.
+
 ## Multilingual support
 
 FTS5 is configured with the `unicode61 remove_diacritics 2` tokenizer and
