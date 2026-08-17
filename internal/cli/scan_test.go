@@ -116,7 +116,7 @@ func TestScanFiles(t *testing.T) {
 
 	opts := indexOptions{MaxFileSize: 10}
 
-	got, err := scanFiles(dir, opts, nil)
+	got, err := scanFiles(dir, opts, nil, nil)
 	if err != nil {
 		t.Fatalf("scanFiles: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestScanFilesExtFilter(t *testing.T) {
 
 	opts := indexOptions{MaxFileSize: 10, Ext: "md"}
 
-	got, err := scanFiles(dir, opts, nil)
+	got, err := scanFiles(dir, opts, nil, nil)
 	if err != nil {
 		t.Fatalf("scanFiles: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestScanFilesExcludeGlob(t *testing.T) {
 
 	opts := indexOptions{MaxFileSize: 10, Exclude: "sub/**"}
 
-	got, err := scanFiles(dir, opts, nil)
+	got, err := scanFiles(dir, opts, nil, nil)
 	if err != nil {
 		t.Fatalf("scanFiles: %v", err)
 	}

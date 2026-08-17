@@ -309,3 +309,58 @@ func TestWalkSecretsExcludedWithoutGitignore(t *testing.T) {
 
 	assertEqual(t, got, []string{"config/app.yaml"})
 }
+
+// TestWalkOnExcludeReasons проверяет, что для каждого отброшенного пути
+// сообщается устойчивый код причины, а исключённый каталог даёт один вызов.
+func TestWalkOnExcludeReasons(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "keep.go"), "package main")
+	mustWrite(t, filepath.Join(dir, "notes.md"), "text")
+	mustWrite(t, filepath.Join(dir, ".env"), "TOKEN=1")
+	mustWrite(t, filepath.Join(dir, "server.key"), "PRIVATE KEY")
+	mustWrite(t, filepath.Join(dir, "empty.go"), "")
+	mustWrite(t, filepath.Join(dir, "yarn.lock"), "lock")
+	mustWrite(t, filepath.Join(dir, "node_modules", "dep", "a.go"), "package dep")
+
+	got := map[string]string{}
+	opts := Options{Ext: []string{"go"}, OnExclude: func(e Exclusion) {
+		rel, err := filepath.Rel(dir, e.Path)
+		if err != nil {
+			t.Fatalf("Rel: %v", err)
+		}
+		got[filepath.ToSlash(rel)] = e.Reason
+	}}
+
+	var files []string
+	if err := Walk(dir, opts, func(f File) error {
+		files = append(files, f.Rel)
+		return nil
+	}, nil); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(files) != 1 || files[0] != "keep.go" {
+		t.Fatalf("files = %v, ожидался только keep.go", files)
+	}
+
+	want := map[string]string{
+		"notes.md": ReasonExt,
+		// Скрытое имя проверяется раньше секретного, поэтому .env
+		// отбрасывается как скрытый путь.
+		".env":         ReasonHidden,
+		"server.key":   ReasonSecret,
+		"empty.go":     ReasonEmpty,
+		"yarn.lock":    ReasonNoisy,
+		"node_modules": ReasonVendor,
+	}
+	for path, reason := range want {
+		if got[path] != reason {
+			t.Errorf("причина для %s = %q, ожидалось %q", path, got[path], reason)
+		}
+	}
+	// Каталог зависимостей не обходится, поэтому файл внутри него
+	// отдельного вызова не получает.
+	if _, ok := got["node_modules/dep/a.go"]; ok {
+		t.Error("содержимое исключённого каталога не должно попадать в OnExclude")
+	}
+}

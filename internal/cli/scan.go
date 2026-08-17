@@ -90,8 +90,9 @@ func buildWalkOptions(opts indexOptions, root string) walk.Options {
 // scanFiles обходит root и возвращает отсортированный список абсолютных
 // путей файлов-кандидатов на индексацию с применёнными фильтрами.
 // Проверка текстовости содержимого здесь не делается.
-func scanFiles(root string, opts indexOptions, onError func(path string, err error)) ([]string, error) {
+func scanFiles(root string, opts indexOptions, onError func(path string, err error), onExclude func(walk.Exclusion)) ([]string, error) {
 	walkOpts := buildWalkOptions(opts, root)
+	walkOpts.OnExclude = onExclude
 
 	// Все правила исключений (скрытые пути, секреты, шум, служебные
 	// каталоги) живут в пакете walk - единственном месте, где они заданы.

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"senso/internal/dbpath"
 	"senso/internal/store"
+	"senso/internal/walk"
 )
 
 func TestParseCheckArgsDefaults(t *testing.T) {
@@ -277,5 +279,77 @@ func TestRunCheckLifecycle(t *testing.T) {
 	}
 	if code := runCheckIn(t, dir, "--quiet"); code != exitStale {
 		t.Errorf("removed file: exit = %d, want %d", code, exitStale)
+	}
+}
+
+// TestExcludeReasonUsesAncestorDir проверяет, что для файла внутри
+// исключённого каталога причина берётся у каталога-предка.
+func TestExcludeReasonUsesAncestorDir(t *testing.T) {
+	reasons := map[string]string{
+		"/p/build":     walk.ReasonGitignore,
+		"/p/a/one.key": walk.ReasonSecret,
+	}
+
+	cases := map[string]string{
+		"/p/build/out/app.js": walk.ReasonGitignore,
+		"/p/a/one.key":        walk.ReasonSecret,
+		"/p/a/two.go":         reasonUnknown,
+	}
+	for path, want := range cases {
+		if got := excludeReason(path, reasons); got != want {
+			t.Errorf("excludeReason(%s) = %q, ожидалось %q", path, got, want)
+		}
+	}
+}
+
+// TestRunCheckReportsExcludeReason проверяет, что файл, выпавший из выборки
+// из-за нового правила, попадает в отчёт с кодом причины.
+func TestRunCheckReportsExcludeReason(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(prev)
+
+	if err := RunIndex([]string{"--quiet", "."}); err != nil {
+		t.Fatalf("RunIndex: %v", err)
+	}
+
+	opts, err := parseCheckArgs([]string{"--exclude", "b.txt", "."})
+	if err != nil {
+		t.Fatalf("parseCheckArgs: %v", err)
+	}
+	dbPath, err := dbpath.Find(opts.DB)
+	if err != nil {
+		t.Fatalf("dbpath.Find: %v", err)
+	}
+	s, err := store.OpenReadOnly(dbPath)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	defer s.Close()
+
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := newCheckReport()
+	if err := compareTree(root, opts, s, rep); err != nil {
+		t.Fatalf("compareTree: %v", err)
+	}
+
+	if rep.Excluded != 1 || rep.ExcludedByReason[walk.ReasonExcludeGlob] != 1 {
+		t.Fatalf("Excluded = %d, ExcludedByReason = %v", rep.Excluded, rep.ExcludedByReason)
 	}
 }

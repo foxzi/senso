@@ -238,6 +238,8 @@ fields:
 | `chunks` | number | total chunks written |
 | `skipped` | number | total files skipped (see codes below) |
 | `skipped_by_code` | object | skip reason -> number of files; absent if nothing was skipped |
+| `excluded` | number | total paths dropped by the selection rules during the tree walk |
+| `excluded_by_reason` | object | exclusion reason -> number of paths; absent if nothing was excluded |
 | `failed` | array | objects `{path, code, message}`; always present, empty as `[]` |
 | `interrupted` | bool | indexing was interrupted by a SIGINT/SIGTERM signal |
 | `duration_ms` | number | indexing time in milliseconds |
@@ -251,13 +253,26 @@ could be extracted from the document), `too_large` (bigger than
 `no_schema` (rare: the first file under `--embed` produced no chunk at
 all).
 
+Exclusion reason codes (`excluded_by_reason`): `hard_excluded` (the
+`.git` or `.senso` service directory), `vendor` (`node_modules`,
+`vendor`), `hidden` (a hidden path without `--hidden`), `secret` (the
+file looks like a credential store), `gitignore` (a `.gitignore` rule),
+`exclude_glob` (an `--exclude` pattern), `noisy` (a machine-generated
+file), `ext` (the extension is not in `--ext`), `symlink` (a symbolic
+link), `empty` (zero size), `too_large` (bigger than
+`--max-file-size`). An excluded directory counts as a single entry: its
+contents are never walked, so the files inside it are not counted. These
+counters answer the "why is my file not in the index" question: when
+`indexed` is zero, the breakdown immediately shows which selection rule
+fired.
+
 Error codes (`failed[].code`): `walk_failed` (tree walk error),
 `read_failed` (file read error), `extract_failed` (document parsing
 error, for example a corrupt `.docx`).
 
 ```sh
 $ senso index --report-json --quiet .
-{"scanned":3,"indexed":1,"updated":0,"unchanged":0,"deleted":0,"chunks":1,"skipped":1,"skipped_by_code":{"binary":1},"failed":[{"path":"/tmp/w/broken.docx","code":"extract_failed","message":"zip: not a valid zip file"}],"interrupted":false,"duration_ms":2,"database":"/tmp/w/.senso/index.db","vectors":false}
+{"scanned":3,"indexed":1,"updated":0,"unchanged":0,"deleted":0,"chunks":1,"skipped":1,"skipped_by_code":{"binary":1},"excluded":12,"excluded_by_reason":{"gitignore":10,"hidden":1,"secret":1},"failed":[{"path":"/tmp/w/broken.docx","code":"extract_failed","message":"zip: not a valid zip file"}],"interrupted":false,"duration_ms":2,"database":"/tmp/w/.senso/index.db","vectors":false}
 ```
 
 Exit codes for `index`: `0` — success; `1` — an indexing error, or (with
@@ -608,6 +623,7 @@ database: .senso/index.db
 | `missing` | number | files in the index that are gone from disk |
 | `unindexed` | number | files on disk that are not indexed yet |
 | `excluded` | number | indexed files that no longer pass the filters |
+| `excluded_by_reason` | object | exclusion reason -> number of files; the same codes as in `index --report-json` |
 | `issues` | array | objects `{code, message}`; always present, empty as `[]` |
 | `failed` | array | objects `{path, code, message}` for files whose state could not be checked |
 | `indexed_at` | string | time of the last indexing run |
@@ -619,6 +635,10 @@ Codes in `issues`: `no_index` (no index database found — every discovered
 file counts as `unindexed`), `model_mismatch` (the index was built with a
 different embedding model, checked only with `--embed`), `vectors_missing`
 (`--embed` was requested but the index has no vectors).
+
+`excluded_by_reason` answers right away why a file left the selection:
+`gitignore: 1`, for example, means an indexed file was caught by a new
+`.gitignore` rule rather than deleted.
 
 Files in `failed` (possible only with `--hash`; the codes match `index`:
 `read_failed`, `walk_failed`) do not make the index stale on their own:

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"senso/internal/walk"
 )
 
 // TestReadIndexableEmptyFile проверяет код причины для пустого файла.
@@ -133,8 +135,15 @@ func TestIndexReportCounters(t *testing.T) {
 	if r.SkippedByCode[skipBinary] != 2 || r.SkippedByCode[skipEmpty] != 1 {
 		t.Fatalf("SkippedByCode = %v", r.SkippedByCode)
 	}
-	if got := r.skipCodes(); len(got) != 2 || got[0] != skipBinary || got[1] != skipEmpty {
-		t.Fatalf("skipCodes = %v, ожидался отсортированный список", got)
+	if got := countsByCode(r.SkippedByCode); got != skipBinary+": 2, "+skipEmpty+": 1" {
+		t.Fatalf("countsByCode = %q, ожидался отсортированный список", got)
+	}
+
+	r.addExclude(walk.ReasonGitignore)
+	r.addExclude(walk.ReasonGitignore)
+	r.addExclude(walk.ReasonSecret)
+	if r.Excluded != 3 || r.ExcludedByReason[walk.ReasonGitignore] != 2 {
+		t.Fatalf("Excluded = %d, ExcludedByReason = %v", r.Excluded, r.ExcludedByReason)
 	}
 	if len(r.Failed) != 1 || r.Failed[0].Code != failExtract || r.Failed[0].Message != "bad zip" {
 		t.Fatalf("Failed = %v", r.Failed)

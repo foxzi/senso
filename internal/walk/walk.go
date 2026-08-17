@@ -16,6 +16,35 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
+// Устойчивые коды причин, по которым путь не попал в выборку. Они видны
+// в диагностическом отчёте senso index, поэтому не должны меняться без
+// необходимости: на них опираются вызывающие senso агенты и скрипты.
+const (
+	// ReasonHardExcluded - служебный каталог .git или .senso.
+	ReasonHardExcluded = "hard_excluded"
+	// ReasonVendor - каталог сторонних зависимостей (node_modules, vendor).
+	ReasonVendor = "vendor"
+	// ReasonHidden - скрытый путь без --hidden или --include-hidden.
+	ReasonHidden = "hidden"
+	// ReasonSecret - файл, похожий на хранилище учётных данных.
+	ReasonSecret = "secret"
+	// ReasonGitignore - путь исключён правилом .gitignore.
+	ReasonGitignore = "gitignore"
+	// ReasonExcludeGlob - путь совпал с шаблоном --exclude.
+	ReasonExcludeGlob = "exclude_glob"
+	// ReasonNoisy - машинно-генерируемый файл (lock, min.js, map, svg).
+	ReasonNoisy = "noisy"
+	// ReasonExt - расширение не входит в список --ext.
+	ReasonExt = "ext"
+	// ReasonSymlink - символическая ссылка: не разыменовывается, чтобы
+	// не попасть в цикл.
+	ReasonSymlink = "symlink"
+	// ReasonEmpty - файл нулевого размера.
+	ReasonEmpty = "empty"
+	// ReasonTooLarge - файл больше Options.MaxFileSize.
+	ReasonTooLarge = "too_large"
+)
+
 // Options задаёт параметры обхода.
 type Options struct {
 	Ext          []string // пусто = любые расширения
@@ -44,6 +73,21 @@ type Options struct {
 	// NoisyPatterns заменяет встроенный список шумных файлов. Пустое
 	// значение оставляет список по умолчанию, см. DefaultNoisyPatterns.
 	NoisyPatterns []string
+
+	// OnExclude, если задан, вызывается для каждого пути, отброшенного
+	// правилами отбора. Исключённый каталог даёт один вызов: его
+	// содержимое не обходится вообще, поэтому сосчитать файлы внутри него
+	// нельзя, не заплатив тем самым обходом, которого правило и позволяет
+	// избежать. Причина исключения файла внутри такого каталога ищется по
+	// его каталогам-предкам.
+	OnExclude func(Exclusion)
+}
+
+// Exclusion описывает путь, отброшенный правилами отбора.
+type Exclusion struct {
+	Path   string // абсолютный, filepath.Clean
+	Reason string // код причины, Reason*
+	IsDir  bool   // исключён весь каталог вместе с содержимым
 }
 
 // File описывает один подходящий по фильтрам файл.
@@ -80,6 +124,19 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 		}
 	}
 
+	// exclude сообщает причину отказа и возвращает skip, чтобы точки
+	// отказа оставались однострочными.
+	exclude := func(path, reason string, skip error) error {
+		if opts.OnExclude != nil {
+			opts.OnExclude(Exclusion{
+				Path:   filepath.Clean(path),
+				Reason: reason,
+				IsDir:  skip == fs.SkipDir,
+			})
+		}
+		return skip
+	}
+
 	walkFn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			reportErr(path, err)
@@ -92,7 +149,7 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 		// Символические ссылки не разыменовываются - ни в файлы, ни в
 		// директории, чтобы не попасть в цикл.
 		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
+			return exclude(path, ReasonSymlink, nil)
 		}
 
 		rel, err := filepath.Rel(rootAbs, path)
@@ -105,18 +162,21 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 
 		if d.IsDir() {
 			if path != rootAbs {
-				if isHardExcludedDir(name) || isVendorDir(name) {
-					return fs.SkipDir
+				if isHardExcludedDir(name) {
+					return exclude(path, ReasonHardExcluded, fs.SkipDir)
+				}
+				if isVendorDir(name) {
+					return exclude(path, ReasonVendor, fs.SkipDir)
 				}
 				if isHiddenName(name) && !opts.Hidden &&
 					!dirMayContainIncluded(opts.IncludeHidden, rel, name) {
-					return fs.SkipDir
+					return exclude(path, ReasonHidden, fs.SkipDir)
 				}
 				if opts.UseGitignore && isIgnored(matchers, rootAbs, filepath.Dir(path), path) {
-					return fs.SkipDir
+					return exclude(path, ReasonGitignore, fs.SkipDir)
 				}
 				if excludedByGlob(rootAbs, path, opts.Exclude) {
-					return fs.SkipDir
+					return exclude(path, ReasonExcludeGlob, fs.SkipDir)
 				}
 			}
 			if opts.UseGitignore {
@@ -127,28 +187,28 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 
 		// Обычный файл.
 		if opts.UseGitignore && isIgnored(matchers, rootAbs, filepath.Dir(path), path) {
-			return nil
+			return exclude(path, ReasonGitignore, nil)
 		}
 		if excludedByGlob(rootAbs, path, opts.Exclude) {
-			return nil
+			return exclude(path, ReasonExcludeGlob, nil)
 		}
 		if isNoisyName(name, opts.NoisyPatterns) && !opts.Noisy &&
 			!includedByGlob(opts.IncludeNoisy, rel, name) {
-			return nil
+			return exclude(path, ReasonNoisy, nil)
 		}
 		// Скрытые файлы и файлы с учётными данными открываются только
 		// явно: --hidden действует на скрытые, но не на секреты, а
 		// точечный шаблон --include-hidden - на то и другое.
 		if !includedByGlob(opts.IncludeHidden, rel, name) {
 			if isHiddenName(name) && !opts.Hidden {
-				return nil
+				return exclude(path, ReasonHidden, nil)
 			}
 			if isSecretName(name) {
-				return nil
+				return exclude(path, ReasonSecret, nil)
 			}
 		}
 		if len(extSet) > 0 && !extSet[normalizeExt(filepath.Ext(name))] {
-			return nil
+			return exclude(path, ReasonExt, nil)
 		}
 
 		info, err := d.Info()
@@ -157,10 +217,10 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 			return nil
 		}
 		if info.Size() == 0 {
-			return nil
+			return exclude(path, ReasonEmpty, nil)
 		}
 		if opts.MaxFileSize > 0 && info.Size() > opts.MaxFileSize {
-			return nil
+			return exclude(path, ReasonTooLarge, nil)
 		}
 
 		f := File{

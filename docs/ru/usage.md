@@ -235,6 +235,8 @@ N, ...)` с причинами пропуска и `не удалось обра
 | `chunks` | число | всего чанков записано |
 | `skipped` | число | всего файлов пропущено (см. коды ниже) |
 | `skipped_by_code` | объект | причина пропуска → число файлов; отсутствует, если пропусков нет |
+| `excluded` | число | всего путей отброшено правилами отбора при обходе дерева |
+| `excluded_by_reason` | объект | причина исключения → число путей; отсутствует, если исключений нет |
 | `failed` | массив | объекты `{path, code, message}`; всегда присутствует, пустой — как `[]` |
 | `interrupted` | bool | индексация была прервана сигналом SIGINT/SIGTERM |
 | `duration_ms` | число | время индексации в миллисекундах |
@@ -247,13 +249,25 @@ N, ...)` с причинами пропуска и `не удалось обра
 между сканированием и обработкой), `no_schema` (редкий случай: первый
 файл при `--embed` не дал ни одного чанка).
 
+Коды причин исключения (`excluded_by_reason`): `hard_excluded`
+(служебный каталог `.git` или `.senso`), `vendor` (`node_modules`,
+`vendor`), `hidden` (скрытый путь без `--hidden`), `secret` (файл похож
+на хранилище учётных данных), `gitignore` (правило `.gitignore`),
+`exclude_glob` (шаблон `--exclude`), `noisy` (машинно-генерируемый файл),
+`ext` (расширение не входит в `--ext`), `symlink` (символическая ссылка),
+`empty` (нулевой размер), `too_large` (больше `--max-file-size`).
+Исключённый каталог считается одной записью: его содержимое не
+обходится, поэтому файлы внутри него не пересчитываются. Эти счётчики
+отвечают на вопрос «почему файл не попал в индекс»: если `indexed` равен
+нулю, разбивка сразу показывает, какое правило отбора сработало.
+
 Коды ошибок (`failed[].code`): `walk_failed` (ошибка обхода дерева),
 `read_failed` (ошибка чтения файла), `extract_failed` (ошибка разбора
 документа, например битый `.docx`).
 
 ```sh
 $ senso index --report-json --quiet .
-{"scanned":3,"indexed":1,"updated":0,"unchanged":0,"deleted":0,"chunks":1,"skipped":1,"skipped_by_code":{"binary":1},"failed":[{"path":"/tmp/w/broken.docx","code":"extract_failed","message":"zip: not a valid zip file"}],"interrupted":false,"duration_ms":2,"database":"/tmp/w/.senso/index.db","vectors":false}
+{"scanned":3,"indexed":1,"updated":0,"unchanged":0,"deleted":0,"chunks":1,"skipped":1,"skipped_by_code":{"binary":1},"excluded":12,"excluded_by_reason":{"gitignore":10,"hidden":1,"secret":1},"failed":[{"path":"/tmp/w/broken.docx","code":"extract_failed","message":"zip: not a valid zip file"}],"interrupted":false,"duration_ms":2,"database":"/tmp/w/.senso/index.db","vectors":false}
 ```
 
 Коды выхода `index`: `0` — успех; `1` — ошибка индексации или (с флагом
@@ -607,6 +621,7 @@ $ senso check
 | `missing` | число | файлов есть в индексе, но нет на диске |
 | `unindexed` | число | файлов на диске ещё не проиндексировано |
 | `excluded` | число | файлов из индекса больше не проходят фильтры |
+| `excluded_by_reason` | объект | причина исключения → число файлов; коды те же, что у `index --report-json` |
 | `issues` | массив | объекты `{code, message}`; всегда присутствует, пустой — как `[]` |
 | `failed` | массив | объекты `{path, code, message}` для файлов, состояние которых проверить не удалось |
 | `indexed_at` | строка | время последней индексации |
@@ -618,6 +633,10 @@ $ senso check
 файлы попадают в `unindexed`), `model_mismatch` (индекс построен другой
 моделью эмбеддингов, проверяется только с `--embed`), `vectors_missing`
 (запрошен `--embed`, а векторов в индексе нет).
+
+`excluded_by_reason` сразу отвечает, из-за чего файл выпал из выборки:
+например `gitignore: 1` означает, что проиндексированный файл попал под
+новое правило `.gitignore`, а не был удалён.
 
 Файлы в `failed` (возможны только с `--hash`, коды те же, что у
 `index`: `read_failed`, `walk_failed`) сами по себе не делают индекс

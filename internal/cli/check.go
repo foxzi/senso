@@ -13,6 +13,8 @@ import (
 	"senso/internal/dbpath"
 	"senso/internal/i18n"
 	"senso/internal/store"
+	"senso/internal/text"
+	"senso/internal/walk"
 )
 
 // exitStale - код завершения check при устаревшем индексе. Отдельный код
@@ -110,8 +112,10 @@ type checkReport struct {
 	// Unindexed - файлов на диске, которых ещё нет в индексе.
 	Unindexed int `json:"unindexed"`
 	// Excluded - файлов, которые есть в индексе и на диске, но текущие
-	// правила отбора их больше не пропускают.
-	Excluded int `json:"excluded"`
+	// правила отбора их больше не пропускают, с разбивкой по кодам причин
+	// (см. walk.Reason*).
+	Excluded         int            `json:"excluded"`
+	ExcludedByReason map[string]int `json:"excluded_by_reason,omitempty"`
 	// Issues - расхождения параметров индексации.
 	Issues []checkIssue `json:"issues"`
 	// Failed - файлы, состояние которых не удалось проверить (актуально
@@ -199,13 +203,23 @@ func missingIndexReport(rep *checkReport, root string, opts checkOptions) *check
 
 	candidates, err := scanFiles(root, opts.indexOptions, func(path string, walkErr error) {
 		rep.addFailure(path, failWalk, walkErr)
-	})
+	}, nil)
 	if err == nil {
 		rep.Scanned = len(candidates)
 		rep.Unindexed = len(candidates)
 	}
 	rep.Fresh = false
 	return rep
+}
+
+// addExclude учитывает проиндексированный файл, который перестал проходить
+// правила отбора, вместе с причиной.
+func (r *checkReport) addExclude(reason string) {
+	r.Excluded++
+	if r.ExcludedByReason == nil {
+		r.ExcludedByReason = make(map[string]int)
+	}
+	r.ExcludedByReason[reason]++
 }
 
 // addFailure учитывает файл, состояние которого не удалось проверить.
@@ -248,18 +262,27 @@ func collectIndexState(s *store.Store, opts checkOptions, rep *checkReport) erro
 // compareTree сравнивает файлы поддерева root на диске с состоянием индекса
 // и раскладывает расхождения по категориям отчёта.
 func compareTree(root string, opts checkOptions, s *store.Store, rep *checkReport) error {
+	// Состояние индекса читается до обхода: зная его, можно запоминать
+	// причины исключения только для проиндексированных файлов, а не для
+	// всего отброшенного дерева.
+	indexed, err := s.FileStates(root)
+	if err != nil {
+		return err
+	}
+
+	reasons := make(map[string]string)
 	candidates, err := scanFiles(root, opts.indexOptions, func(path string, walkErr error) {
 		rep.addFailure(path, failWalk, walkErr)
+	}, func(e walk.Exclusion) {
+		p := text.Normalize(e.Path)
+		if _, ok := indexed[p]; ok || e.IsDir {
+			reasons[p] = e.Reason
+		}
 	})
 	if err != nil {
 		return err
 	}
 	rep.Scanned = len(candidates)
-
-	indexed, err := s.FileStates(root)
-	if err != nil {
-		return err
-	}
 
 	onDisk := make(map[string]struct{}, len(candidates))
 	for _, path := range candidates {
@@ -293,12 +316,33 @@ func compareTree(root string, opts checkOptions, s *store.Store, rep *checkRepor
 		if _, err := os.Stat(path); err != nil {
 			rep.Missing++
 		} else {
-			rep.Excluded++
+			rep.addExclude(excludeReason(path, reasons))
 		}
 	}
 
 	sortFailures(rep.Failed)
 	return nil
+}
+
+// reasonUnknown - причина исключения, которую не удалось определить.
+// Штатно не встречается: файл либо отброшен сам, либо лежит внутри
+// отброшенного каталога.
+const reasonUnknown = "unknown"
+
+// excludeReason ищет причину исключения пути: сначала по самому пути, затем
+// по каталогам-предкам, потому что файл внутри исключённого каталога
+// отдельного вызова OnExclude не получает.
+func excludeReason(path string, reasons map[string]string) string {
+	for p := path; ; {
+		if reason, ok := reasons[p]; ok {
+			return reason
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return reasonUnknown
+		}
+		p = parent
+	}
 }
 
 // fileChanged сообщает, отличается ли файл на диске от сохранённого в
@@ -367,6 +411,11 @@ func printCheckSummary(w io.Writer, rep *checkReport, cwd string) {
 		fmt.Fprintf(w, i18n.T("index is out of date: %d changed, %d missing, %d unindexed, %d newly excluded\n",
 			"индекс устарел: изменено %d, удалено %d, новых %d, теперь исключено %d\n"),
 			rep.Changed, rep.Missing, rep.Unindexed, rep.Excluded)
+	}
+
+	if rep.Excluded > 0 {
+		fmt.Fprintf(w, i18n.T("  newly excluded by rules: %s\n", "  теперь исключено правилами: %s\n"),
+			countsByCode(rep.ExcludedByReason))
 	}
 
 	for _, issue := range rep.Issues {

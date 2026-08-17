@@ -16,6 +16,7 @@ import (
 	"senso/internal/embed"
 	"senso/internal/i18n"
 	"senso/internal/store"
+	"senso/internal/walk"
 )
 
 // embedBatchSize - максимальное число чанков в одном запросе эмбеддинга.
@@ -100,6 +101,8 @@ func RunIndex(args []string) error {
 
 	candidates, err := scanFiles(root, opts, func(path string, walkErr error) {
 		rep.addFailure(path, failWalk, walkErr)
+	}, func(e walk.Exclusion) {
+		rep.addExclude(e.Reason)
 	})
 	if err != nil {
 		return err

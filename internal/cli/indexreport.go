@@ -88,6 +88,11 @@ type indexReport struct {
 	// Skipped - сколько файлов пропущено, с разбивкой по кодам причин.
 	Skipped       int            `json:"skipped"`
 	SkippedByCode map[string]int `json:"skipped_by_code,omitempty"`
+	// Excluded - сколько путей отброшено правилами отбора при обходе
+	// дерева, с разбивкой по кодам причин (см. walk.Reason*). Исключённый
+	// каталог считается одной записью: его содержимое не обходится.
+	Excluded         int            `json:"excluded"`
+	ExcludedByReason map[string]int `json:"excluded_by_reason,omitempty"`
 	// Failed - файлы, обработка которых завершилась ошибкой.
 	Failed []reportFailure `json:"failed"`
 	// Interrupted - индексация прервана сигналом и не дошла до конца.
@@ -112,6 +117,15 @@ func (r *indexReport) addSkip(code string) {
 	r.SkippedByCode[code]++
 }
 
+// addExclude учитывает путь, отброшенный правилами отбора при обходе.
+func (r *indexReport) addExclude(reason string) {
+	r.Excluded++
+	if r.ExcludedByReason == nil {
+		r.ExcludedByReason = make(map[string]int)
+	}
+	r.ExcludedByReason[reason]++
+}
+
 // addFailure учитывает файл, который не удалось обработать.
 func (r *indexReport) addFailure(path, code string, err error) {
 	if code == "" {
@@ -120,15 +134,19 @@ func (r *indexReport) addFailure(path, code string, err error) {
 	r.Failed = append(r.Failed, reportFailure{Path: path, Code: code, Message: err.Error()})
 }
 
-// skipCodes возвращает встреченные коды пропуска в устойчивом порядке -
-// нужен для человекочитаемой сводки.
-func (r *indexReport) skipCodes() []string {
-	codes := make([]string, 0, len(r.SkippedByCode))
-	for code := range r.SkippedByCode {
+// countsByCode собирает счётчики в строку вида "code: n, code: n" с
+// устойчивым порядком кодов - нужен для человекочитаемой сводки.
+func countsByCode(counts map[string]int) string {
+	codes := make([]string, 0, len(counts))
+	for code := range counts {
 		codes = append(codes, code)
 	}
 	sort.Strings(codes)
-	return codes
+	parts := make([]string, 0, len(codes))
+	for _, code := range codes {
+		parts = append(parts, fmt.Sprintf("%s: %d", code, counts[code]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // printIndexSummary печатает человекочитаемую сводку в stderr: одну строку
@@ -145,11 +163,13 @@ func printIndexSummary(w io.Writer, r *indexReport, cwd string) {
 		r.Scanned, r.Indexed, r.Updated, r.Unchanged, r.Deleted, r.Chunks, dur, vectorsLabel)
 
 	if r.Skipped > 0 {
-		parts := make([]string, 0, len(r.SkippedByCode))
-		for _, code := range r.skipCodes() {
-			parts = append(parts, fmt.Sprintf("%s: %d", code, r.SkippedByCode[code]))
-		}
-		fmt.Fprintf(w, i18n.T("skipped: %d (%s)\n", "пропущено: %d (%s)\n"), r.Skipped, strings.Join(parts, ", "))
+		fmt.Fprintf(w, i18n.T("skipped: %d (%s)\n", "пропущено: %d (%s)\n"),
+			r.Skipped, countsByCode(r.SkippedByCode))
+	}
+
+	if r.Excluded > 0 {
+		fmt.Fprintf(w, i18n.T("excluded by rules: %d (%s)\n", "исключено правилами: %d (%s)\n"),
+			r.Excluded, countsByCode(r.ExcludedByReason))
 	}
 
 	if len(r.Failed) > 0 {
