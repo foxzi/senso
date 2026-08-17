@@ -93,7 +93,7 @@ index is never committed by accident.
 | Command  | Purpose                                              |
 |----------|-------------------------------------------------------|
 | `index`  | build or update the index for a directory              |
-| `search` | search the index, text/JSON/paths-only output          |
+| `search` | search the index, `--format text/json/json-v2/paths`   |
 | `show`   | print the full saved text of a chunk by its `search` reference |
 | `status` | show index statistics (files, chunks, mode, size)       |
 | `check`  | check whether the index is up to date (exit code 3 if not) |

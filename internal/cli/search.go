@@ -23,6 +23,7 @@ type searchOptions struct {
 
 	DB          string
 	K           int
+	Format      string
 	JSON        bool
 	PathsOnly   bool
 	Snippet     int
@@ -54,8 +55,9 @@ func searchFlagSet(opts *searchOptions) *flag.FlagSet {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.DB, "db", "", i18n.T("path to the database file", "путь к файлу базы данных"))
 	fs.IntVar(&opts.K, "k", 10, i18n.T("number of chunks to return", "число возвращаемых чанков"))
-	fs.BoolVar(&opts.JSON, "json", false, i18n.T("print results as JSON", "вывести результаты в формате JSON"))
-	fs.BoolVar(&opts.PathsOnly, "paths-only", false, i18n.T("print only unique file paths", "вывести только уникальные пути файлов"))
+	fs.StringVar(&opts.Format, "format", "", i18n.T("output format: text, json, json-v2 or paths; json-v2 adds the query context, ranks, refs for senso show and warnings", "формат вывода: text, json, json-v2 или paths; json-v2 добавляет контекст запроса, ранги, ссылки для senso show и предупреждения"))
+	fs.BoolVar(&opts.JSON, "json", false, i18n.T("print results as JSON (same as --format json)", "вывести результаты в формате JSON (то же, что --format json)"))
+	fs.BoolVar(&opts.PathsOnly, "paths-only", false, i18n.T("print only unique file paths (same as --format paths)", "вывести только уникальные пути файлов (то же, что --format paths)"))
 	fs.IntVar(&opts.Snippet, "snippet", 500, i18n.T("length of the text snippet in results, in runes", "длина фрагмента текста в результатах, в рунах"))
 	// --path/--ext/--exclude/--root фильтруют уже найденные результаты, а не
 	// список файлов при индексации (в отличие от одноимённых флагов index),
@@ -106,6 +108,14 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 	if opts.JSON && opts.PathsOnly {
 		return searchOptions{}, usagef("%s", i18n.T("--json and --paths-only cannot be used together", "--json и --paths-only нельзя использовать одновременно"))
 	}
+	if opts.Format != "" {
+		if opts.JSON || opts.PathsOnly {
+			return searchOptions{}, usagef("%s", i18n.T("--format cannot be combined with --json or --paths-only", "--format нельзя использовать вместе с --json или --paths-only"))
+		}
+		if !containsString(searchFormats, opts.Format) {
+			return searchOptions{}, usagef(i18n.T("--format %q is unknown, expected one of: %s", "--format %q неизвестен, ожидается одно из: %s"), opts.Format, strings.Join(searchFormats, ", "))
+		}
+	}
 	if opts.Semantic && opts.Hybrid {
 		return searchOptions{}, usagef("%s", i18n.T("use either --semantic or --hybrid, not both", "укажите либо --semantic, либо --hybrid, но не оба"))
 	}
@@ -149,15 +159,43 @@ func RunSearch(args []string) error {
 		results = results[:opts.K]
 	}
 
-	switch {
-	case opts.JSON:
+	switch opts.outputFormat() {
+	case formatJSONV2:
+		return printSearchJSONV2(s, results, opts, filter)
+	case formatJSON:
 		return printSearchJSON(results, opts.Query, opts.Snippet)
-	case opts.PathsOnly:
+	case formatPaths:
 		printSearchPaths(results)
 	default:
 		printSearchText(results, opts.Query, opts.Snippet)
 	}
 	return nil
+}
+
+// outputFormat возвращает итоговый формат вывода. --format задаёт его
+// явно; исторические --json и --paths-only остаются короткими псевдонимами
+// своих форматов, чтобы уже написанные вызовы senso не пришлось менять.
+func (o searchOptions) outputFormat() string {
+	switch {
+	case o.Format != "":
+		return o.Format
+	case o.JSON:
+		return formatJSON
+	case o.PathsOnly:
+		return formatPaths
+	default:
+		return formatText
+	}
+}
+
+// containsString сообщает, есть ли значение в списке.
+func containsString(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // filterPoolMultiplier и filterPoolMinimum задают размер расширенного пула

@@ -299,8 +299,9 @@ Flags:
 |---|---|---|
 | `--db <file>` | `""` | path to the database file |
 | `--k <n>` | `10` | number of chunks to return |
-| `--json` | `false` | print results as JSON |
-| `--paths-only` | `false` | print only unique file paths |
+| `--format <fmt>` | `text` | output format: `text`, `json`, `json-v2` or `paths` |
+| `--json` | `false` | print results as JSON (same as `--format json`) |
+| `--paths-only` | `false` | print only unique file paths (same as `--format paths`) |
 | `--snippet <n>` | `500` | length of the text snippet in results, in runes |
 | `--path <glob,...>` | `""` | keep only results whose path matches at least one of the comma-separated glob patterns |
 | `--ext <list>` | `""` | keep only results with one of the comma-separated extensions (with or without leading dot) |
@@ -323,6 +324,7 @@ senso search --paths-only "text" | xargs -I{} wc -l {}
 senso search --semantic "a query about the meaning, not the words"
 senso search --hybrid "an exact term and its meaning at once"
 senso search --json --path 'internal/**' --ext go "replace file transaction"
+senso search --format json-v2 --hybrid "meaning and exact term" | jq '.results[].ref'
 ```
 
 #### Result filters: `--path`, `--ext`, `--exclude`, `--root`
@@ -417,6 +419,96 @@ is printed (valid JSON, not an empty string).
 
 `--paths-only`: a list of unique absolute file paths, one per line, with
 no duplicates and no scores.
+
+#### `--format json-v2`
+
+A single object instead of an array: the results together with the query
+context that produced them. The format is self-contained — the response
+shows which mode and which restrictions produced the results, so an agent
+does not have to remember its own command line to interpret the output.
+
+```json
+{
+  "schema": 2,
+  "mode": "hybrid",
+  "query": "replace file transaction",
+  "filters": {
+    "k": 10,
+    "path": ["internal/**"],
+    "ext": [".go"],
+    "max_per_file": 2
+  },
+  "results": [
+    {
+      "ref": "/abs/path/store.go#7",
+      "path": "/abs/path/store.go",
+      "chunk": 7,
+      "line_start": 120,
+      "line_end": 148,
+      "rank": 1,
+      "score": 0.0328,
+      "score_kind": "rrf",
+      "text": "text of the matching snippet",
+      "truncated": true,
+      "source_type": "text"
+    }
+  ],
+  "warnings": []
+}
+```
+
+Top-level fields:
+
+| Field | Purpose |
+|---|---|
+| `schema` | response schema version, currently `2` |
+| `mode` | search mode: `lexical`, `semantic` or `hybrid` |
+| `query` | the query as senso parsed it |
+| `filters` | restrictions applied to the results |
+| `results` | results in output order |
+| `warnings` | warnings about the results; the field is always present, an empty list means there is nothing to report |
+
+`filters` contains only active restrictions: `k` is always present, the
+other fields (`path`, `ext`, `exclude`, `root`, `deduplicate`,
+`max_per_file`) are omitted when the corresponding flag is not set.
+Extensions are normalized to the leading-dot form (`go` → `.go`), and
+`root` is normalized to an absolute path.
+
+Result fields:
+
+| Field | Purpose |
+|---|---|
+| `ref` | a `path#chunk` reference ready to pass to `senso show` |
+| `path` | absolute file path |
+| `chunk` | chunk number inside the file |
+| `line_start`, `line_end` | first and last line of the chunk in the file (`0` when the database was built by an older version of senso) |
+| `rank` | position in the output, starting from `1` |
+| `score` | relevance score of the current mode |
+| `score_kind` | kind of the score: `bm25`, `cosine` or `rrf` |
+| `text` | text snippet, with the same `--snippet` length and centering as in the human-readable output |
+| `truncated` | `true` when the chunk text was cut by the `--snippet` window; the full text is available through `senso show` |
+| `source_type` | `text` for a plain text file, `extracted` when the text was extracted from a document during indexing, so the file cannot be read directly |
+
+Scores from different modes are not comparable, which is why `score_kind`
+always travels next to `score`. The only ordering comparable across modes
+is `rank`.
+
+Warning codes:
+
+| Code | Meaning |
+|---|---|
+| `file_modified` | the file changed after indexing, the text comes from the index; run `senso index` |
+| `file_missing` | the file is no longer on disk, the text comes from the index |
+
+A warning is reported once per file, even when several chunks of that file
+are in the results.
+
+**Compatibility:** `--json` and `--paths-only` keep working unchanged and
+remain short aliases for `--format json` and `--format paths`; their output
+stays the same. New fields may be added to `json-v2` without changing the
+schema number, so parsers must ignore unknown fields. The meaning of
+existing fields will not change — an incompatible change gets a new
+`schema` number.
 
 **Score:** higher is more relevant in both modes. In lexical mode this is
 inverted bm25 (`score = -bm25`, since SQLite returns bm25 as a negative
