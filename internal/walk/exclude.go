@@ -15,9 +15,11 @@ var hardExcludedDirs = []string{".git", ".senso"}
 // кодом проекта и только шумит в результатах поиска.
 var vendorDirs = []string{"node_modules", "vendor"}
 
-// alwaysExcludedFiles - шаблоны файлов, которые исключаются всегда,
-// даже если они текстовые и проходят по остальным фильтрам.
-var alwaysExcludedFiles = []string{
+// DefaultNoisyPatterns - шаблоны машинно-генерируемых файлов, которые
+// исключаются по умолчанию: они текстовые и проходят остальные фильтры,
+// но осмысленного для поиска содержимого не несут. Список можно заменить
+// целиком через Options.NoisyPatterns.
+var DefaultNoisyPatterns = []string{
 	"*.lock", "*-lock.json", "*.min.js", "*.min.css", "*.map", "*.svg",
 }
 
@@ -65,8 +67,13 @@ func isSecretName(name string) bool {
 
 // isNoisyName сообщает, что файл относится к машинно-генерируемому шуму:
 // lock-файлы, минифицированные бандлы, source maps, векторная графика.
-func isNoisyName(name string) bool {
-	return matchesAny(alwaysExcludedFiles, strings.ToLower(name))
+// Пустой patterns означает список по умолчанию; чтобы отключить правило
+// целиком, используйте Options.Noisy.
+func isNoisyName(name string, patterns []string) bool {
+	if len(patterns) == 0 {
+		patterns = DefaultNoisyPatterns
+	}
+	return matchesAny(patterns, strings.ToLower(name))
 }
 
 // includedByGlob сообщает, что путь явно включён одним из шаблонов

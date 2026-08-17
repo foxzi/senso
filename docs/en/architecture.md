@@ -48,7 +48,10 @@
   is the job of the `text` package, not `walk`. All path exclusion rules
   (the hard-excluded `.git` and `.senso`, dependency directories, hidden
   paths, secret files, noisy files) live in a single `exclude.go` file;
-  callers do not duplicate them.
+  callers do not duplicate them. The default noisy file list
+  (`DefaultNoisyPatterns`) is configurable: `Options.NoisyPatterns`
+  replaces it entirely, while `Options.Noisy` and `Options.IncludeNoisy`
+  selectively include noisy files on top of the exclusions.
 - **`internal/dbpath`** — resolves and creates the database file path by
   priority: `--db` flag, `SENSO_DB` environment variable, walking up the
   directory tree for `.senso`; when creating a new database, writes a

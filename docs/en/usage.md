@@ -109,6 +109,9 @@ Flags:
 | `--no-gitignore` | `false` | do not honor `.gitignore` |
 | `--hidden` | `false` | index hidden files and directories |
 | `--include-hidden <list>` | `""` | comma-separated list of glob patterns to selectively include hidden paths and secret files |
+| `--noisy` | `false` | index machine-generated files too: lock files, minified bundles, source maps, SVG |
+| `--include-noisy <list>` | `""` | comma-separated list of glob patterns to selectively include noisy files |
+| `--noisy-patterns <list>` | `""` | comma-separated list of glob patterns that replace the built-in list of noisy files |
 | `--chunk-size <n>` | `1200` | chunk size in runes |
 | `--overlap <n>` | `150` | chunk overlap in runes |
 | `--query-prefix <s>` | `""` | prefix for search queries (only relevant with `--embed`) |
@@ -132,9 +135,10 @@ senso index --embed .               # + vector embeddings via Ollama
 ```
 
 Indexing always skips the `.senso` service directory, `.git`,
-`node_modules`, `vendor`, as well as "noisy" files (`*.lock`,
-`*-lock.json`, `*.min.js`, `*.min.css`, `*.map`, `*.svg`) — this
-exclusion cannot be turned off with any flag.
+`node_modules`, `vendor` — this exclusion cannot be turned off with any
+flag. In addition, by default it skips "noisy", machine-generated files
+(`*.lock`, `*-lock.json`, `*.min.js`, `*.min.css`, `*.map`, `*.svg`) —
+these can be enabled with the flags described below.
 
 Hidden files and directories (name starting with a dot), as well as
 secret files (`.env`, `.env.*`, `*.env`, `*.pem`, `*.key`, `*.p12`,
@@ -167,6 +171,29 @@ Warning: `--hidden` can pull sensitive data from hidden directories
 into the index (the secrets list only protects by file name), so
 for project configuration directories the targeted
 `--include-hidden` is preferable.
+
+The `--noisy` flag enables indexing of all noisy files at once. The
+`--include-noisy <list>` flag selectively includes the given
+comma-separated glob patterns of noisy files and works independently
+of `--noisy`; a pattern is matched both against the path relative to
+the indexing root and against the file name, same as for
+`--include-hidden`. The `--noisy-patterns <list>` flag does not add
+to but entirely replaces the built-in list of noisy patterns; an
+empty value is equivalent to the default list.
+
+`--exclude` takes precedence over including noise: the command
+`senso index --noisy --exclude '**/*.svg'` indexes lock files but
+not SVG. Noise and hidden paths are orthogonal: `--noisy` does not
+open hidden directories and does not include secrets, and `--hidden`
+does not include noisy files inside hidden directories — indexing a
+noisy file inside a hidden directory requires both permissions at
+once (`--hidden`/`--include-hidden` and `--noisy`/`--include-noisy`).
+
+```sh
+senso index --noisy .
+senso index --include-noisy 'poetry.lock,icons/**' .
+senso index --noisy-patterns '*.pb.go' .
+```
 
 Besides plain text files, senso indexes `.docx`, `.odt`, `.ods`, `.odp`,
 `.xlsx`, `.pptx`, `.rtf`, `.fb2`, `.ipynb` and `.epub` documents: plain text is extracted

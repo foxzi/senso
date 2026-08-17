@@ -94,6 +94,62 @@ func TestWalkSkipsNoisyFiles(t *testing.T) {
 	assertEqual(t, got, []string{"main.go"})
 }
 
+func TestWalkNoisyIncludesGeneratedFiles(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "yarn.lock"), "lock content")
+	mustWrite(t, filepath.Join(root, "icons", "logo.svg"), "<svg></svg>")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{Noisy: true})
+
+	assertEqual(t, got, []string{"icons/logo.svg", "main.go", "yarn.lock"})
+}
+
+func TestWalkIncludeNoisySelectsPatterns(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "poetry.lock"), "lock content")
+	mustWrite(t, filepath.Join(root, "yarn.lock"), "lock content")
+	mustWrite(t, filepath.Join(root, "icons", "logo.svg"), "<svg></svg>")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{IncludeNoisy: []string{"poetry.lock", "icons/**"}})
+
+	assertEqual(t, got, []string{"icons/logo.svg", "main.go", "poetry.lock"})
+}
+
+func TestWalkNoisyPatternsReplaceDefaults(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "yarn.lock"), "lock content")
+	mustWrite(t, filepath.Join(root, "api.pb.go"), "package api")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{NoisyPatterns: []string{"*.pb.go"}})
+
+	assertEqual(t, got, []string{"main.go", "yarn.lock"})
+}
+
+func TestWalkExcludeWinsOverNoisy(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "yarn.lock"), "lock content")
+	mustWrite(t, filepath.Join(root, "icons", "logo.svg"), "<svg></svg>")
+	mustWrite(t, filepath.Join(root, "main.go"), "package main")
+
+	got := collect(t, root, Options{Noisy: true, Exclude: []string{"**/*.svg"}})
+
+	assertEqual(t, got, []string{"main.go", "yarn.lock"})
+}
+
+func TestWalkNoisyDoesNotOpenHiddenOrSecrets(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".cache", "app.min.js"), "var a=1;")
+	mustWrite(t, filepath.Join(root, ".env"), "SECRET_TOKEN=abcdef")
+	mustWrite(t, filepath.Join(root, "app.min.js"), "var a=1;")
+
+	got := collect(t, root, Options{Noisy: true})
+
+	assertEqual(t, got, []string{"app.min.js"})
+}
+
 func TestWalkExcludeGlobDoubleStar(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "docs", "guide.txt"), "guide content")

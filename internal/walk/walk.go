@@ -32,6 +32,18 @@ type Options struct {
 	// файлов с учётными данными. Действуют даже без Hidden, но не
 	// открывают жёстко исключённые каталоги.
 	IncludeHidden []string
+
+	// Noisy включает машинно-генерируемые файлы: lock-файлы,
+	// минифицированные бандлы, source maps, SVG.
+	Noisy bool
+
+	// IncludeNoisy - glob-шаблоны точечного включения машинно-
+	// генерируемых файлов. Действуют даже без Noisy.
+	IncludeNoisy []string
+
+	// NoisyPatterns заменяет встроенный список шумных файлов. Пустое
+	// значение оставляет список по умолчанию, см. DefaultNoisyPatterns.
+	NoisyPatterns []string
 }
 
 // File описывает один подходящий по фильтрам файл.
@@ -42,7 +54,7 @@ type File struct {
 	MTime int64 // unix
 }
 
-// alwaysExcludedFiles, secretFilePatterns и правила скрытых путей описаны
+// DefaultNoisyPatterns, secretFilePatterns и правила скрытых путей описаны
 // в exclude.go.
 
 // Walk обходит дерево root и вызывает fn для каждого подходящего файла.
@@ -120,7 +132,8 @@ func Walk(root string, opts Options, fn func(File) error, onError func(path stri
 		if excludedByGlob(rootAbs, path, opts.Exclude) {
 			return nil
 		}
-		if isNoisyName(name) {
+		if isNoisyName(name, opts.NoisyPatterns) && !opts.Noisy &&
+			!includedByGlob(opts.IncludeNoisy, rel, name) {
 			return nil
 		}
 		// Скрытые файлы и файлы с учётными данными открываются только

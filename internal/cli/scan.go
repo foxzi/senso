@@ -81,6 +81,9 @@ func buildWalkOptions(opts indexOptions, root string) walk.Options {
 		UseGitignore:  !opts.NoGitignore,
 		Hidden:        opts.Hidden,
 		IncludeHidden: splitList(opts.IncludeHidden),
+		Noisy:         opts.Noisy,
+		IncludeNoisy:  splitList(opts.IncludeNoisy),
+		NoisyPatterns: splitList(opts.NoisyPatterns),
 	}
 }
 

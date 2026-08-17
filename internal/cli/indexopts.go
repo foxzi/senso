@@ -23,6 +23,9 @@ type indexOptions struct {
 	NoGitignore   bool
 	Hidden        bool
 	IncludeHidden string
+	Noisy         bool
+	IncludeNoisy  string
+	NoisyPatterns string
 	ChunkSize     int
 	Overlap       int
 	QueryPrefix   string
@@ -54,6 +57,9 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	fs.BoolVar(&opts.NoGitignore, "no-gitignore", false, i18n.T("ignore .gitignore", "не учитывать .gitignore"))
 	fs.BoolVar(&opts.Hidden, "hidden", false, i18n.T("index hidden files and directories (.git and .senso stay excluded; secrets such as .env are not included)", "индексировать скрытые файлы и каталоги (.git и .senso остаются исключёнными; секреты вида .env не включаются)"))
 	fs.StringVar(&opts.IncludeHidden, "include-hidden", "", i18n.T("comma-separated glob patterns of hidden or secret paths to index, for example '.github/**,.agents/**'", "список glob-шаблонов скрытых или секретных путей для индексации через запятую, например '.github/**,.agents/**'"))
+	fs.BoolVar(&opts.Noisy, "noisy", false, i18n.T("index machine-generated files too: lock files, minified bundles, source maps, SVG", "индексировать и машинно-генерируемые файлы: lock-файлы, минифицированные бандлы, source maps, SVG"))
+	fs.StringVar(&opts.IncludeNoisy, "include-noisy", "", i18n.T("comma-separated glob patterns of machine-generated files to index, for example 'poetry.lock,icons/**.svg'", "список glob-шаблонов машинно-генерируемых файлов для индексации через запятую, например 'poetry.lock,icons/**.svg'"))
+	fs.StringVar(&opts.NoisyPatterns, "noisy-patterns", "", i18n.T("comma-separated glob patterns that replace the built-in list of machine-generated files", "список glob-шаблонов через запятую, заменяющий встроенный список машинно-генерируемых файлов"))
 	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
 	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))

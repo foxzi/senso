@@ -22,8 +22,32 @@ func TestIsNoisyName(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isNoisyName(tc.file); got != tc.want {
+			if got := isNoisyName(tc.file, nil); got != tc.want {
 				t.Errorf("isNoisyName(%q) = %v, хотим %v", tc.file, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsNoisyNameCustomPatterns(t *testing.T) {
+	patterns := []string{"*.generated.go", "*.pb.go"}
+
+	cases := []struct {
+		name string
+		file string
+		want bool
+	}{
+		{"свой шаблон совпал", "api.pb.go", true},
+		{"свой шаблон совпал, другой регистр", "API.Generated.GO", true},
+		{"встроенный шаблон больше не действует", "yarn.lock", false},
+		{"встроенный шаблон больше не действует, svg", "icon.svg", false},
+		{"обычный файл", "main.go", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNoisyName(tc.file, patterns); got != tc.want {
+				t.Errorf("isNoisyName(%q, %v) = %v, хотим %v", tc.file, patterns, got, tc.want)
 			}
 		})
 	}
