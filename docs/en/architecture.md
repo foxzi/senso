@@ -232,3 +232,13 @@ Vector backfill is handled separately (`applyBackfill`): if
 `actionReindex` for every file — so every chunk goes through the embedding
 model and gets a vector, even if the file content has not changed since
 the last purely lexical indexing run.
+
+Tree walk, file read and document parsing errors no longer make a file
+silently disappear from the result: each such error is collected into
+the indexing report (the `failed` field, `--strict` and `--report-json`
+flags on `index`) instead of being dropped, and does not stop processing
+of the remaining files. A SIGINT/SIGTERM interruption is handled
+separately from regular file errors: indexing exits with code 130, the
+report's `interrupted` field becomes `true`, `--prune` and the last indexing
+timestamp update are skipped, and files already processed before the signal
+stay fully in the index.

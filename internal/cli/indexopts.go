@@ -35,6 +35,8 @@ type indexOptions struct {
 	Prune         bool
 	Ollama        string
 	Quiet         bool
+	Strict        bool
+	ReportJSON    bool
 }
 
 // indexFlagSet создаёт FlagSet подкоманды index, объявляет в opts все её
@@ -68,6 +70,8 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	fs.IntVar(&opts.Concurrency, "concurrency", 4, i18n.T("number of parallel embedding workers (only applies with --embed)", "число параллельных обработчиков эмбеддинга (действует только с --embed)"))
 	fs.BoolVar(&opts.Prune, "prune", true, i18n.T("remove files missing from disk from the index", "удалять из индекса файлы, отсутствующие на диске"))
 	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --embed)", "адрес сервера Ollama (действует только с --embed)"))
+	fs.BoolVar(&opts.Strict, "strict", false, i18n.T("exit with a non-zero code if any file failed to be read or parsed", "завершаться ненулевым кодом, если какой-то файл не удалось прочитать или разобрать"))
+	fs.BoolVar(&opts.ReportJSON, "report-json", false, i18n.T("print a machine-readable indexing report to stdout", "вывести машинный отчёт об индексации в stdout"))
 	fs.BoolVar(&opts.Quiet, "quiet", false, i18n.T("do not print progress", "не выводить прогресс"))
 	return fs
 }

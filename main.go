@@ -60,6 +60,12 @@ func run(args []string) int {
 		return 0
 	}
 
+	var exitErr *cli.ExitError
+	if errors.As(err, &exitErr) {
+		fmt.Fprintf(os.Stderr, "senso %s: %v\n", cmd, exitErr)
+		return exitErr.Code
+	}
+
 	var usageErr *cli.UsageError
 	if errors.As(err, &usageErr) {
 		fmt.Fprintf(os.Stderr, "senso %s: %v\n", cmd, usageErr)

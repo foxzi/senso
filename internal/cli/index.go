@@ -92,10 +92,19 @@ func RunIndex(args []string) error {
 		fresh = false
 	}
 
-	candidates, err := scanFiles(root, opts)
+	// Отчёт создаётся до обхода дерева: ошибки чтения каталогов и
+	// .gitignore тоже должны попадать в него, а не теряться молча.
+	rep := newIndexReport()
+	rep.Database = dbPath
+	rep.Vectors = opts.Embed
+
+	candidates, err := scanFiles(root, opts, func(path string, walkErr error) {
+		rep.addFailure(path, failWalk, walkErr)
+	})
 	if err != nil {
 		return err
 	}
+	rep.Scanned = len(candidates)
 
 	var client *embed.Client
 	if opts.Embed {
@@ -124,12 +133,9 @@ func RunIndex(args []string) error {
 	cwd, _ := os.Getwd()
 	start := time.Now()
 
-	var changed, totalChunks int
-	interrupted := false
-
 	for i, path := range candidates {
 		if ctx.Err() != nil {
-			interrupted = true
+			rep.Interrupted = true
 			break
 		}
 
@@ -137,6 +143,7 @@ func RunIndex(args []string) error {
 		if err != nil {
 			// файл исчез между сканированием и обработкой - не считаем
 			// это ошибкой всей команды.
+			rep.addSkip(skipVanished)
 			continue
 		}
 		curMtime := info.ModTime().UnixNano()
@@ -157,14 +164,19 @@ func RunIndex(args []string) error {
 		// иначе файлы с неизменившимся содержимым никогда не попадут на
 		// эмбеддинг.
 		if found && curMtime == dbMtime && curSize == dbSize && !backfill {
+			rep.Unchanged++
 			continue
 		}
 
-		content, ok, err := readIndexable(path, int64(opts.MaxFileSize)*1024*1024)
+		content, skip, err := readIndexable(path, int64(opts.MaxFileSize)*1024*1024)
 		if err != nil {
-			return err
+			// Ошибка одного файла не прерывает индексацию: она попадает
+			// в отчёт, а на код возврата влияет только при --strict.
+			rep.addFailure(path, failureCode(err), err)
+			continue
 		}
-		if !ok {
+		if skip != "" {
+			rep.addSkip(skip)
 			continue
 		}
 		curHash := hashContent(content)
@@ -172,12 +184,14 @@ func RunIndex(args []string) error {
 		action := applyBackfill(decideFile(dbMtime, dbSize, dbHash, curMtime, curSize, curHash), backfill)
 		switch action {
 		case actionSkip:
+			rep.Unchanged++
 			continue
 		case actionTouch:
+			// Содержимое то же, обновляются только mtime и размер.
 			if err := s.TouchFile(path, curMtime, curSize); err != nil {
 				return err
 			}
-			changed++
+			rep.Unchanged++
 			continue
 		}
 
@@ -210,28 +224,31 @@ func RunIndex(args []string) error {
 			// модели, а без схемы сохранить файл нельзя - пропускаем.
 			// (fresh здесь возможен только при --embed: без него схема
 			// уже создана до сканирования файлов.)
+			rep.addSkip(skipNoSchema)
 			continue
 		}
 
 		if err := s.ReplaceFile(path, curMtime, curSize, curHash, chunks, vectors); err != nil {
 			return err
 		}
-		changed++
-		totalChunks += len(chunks)
+		if found {
+			rep.Updated++
+		} else {
+			rep.Indexed++
+		}
+		rep.Chunks += len(chunks)
 
 		if !opts.Quiet {
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s (%d chunks)\n", i+1, len(candidates), shortenPath(path, cwd), len(chunks))
 		}
 	}
 
-	if interrupted {
-		return nil
-	}
-
-	deleted := 0
-	if !fresh {
+	// При прерывании индекс остаётся консистентным, но неполным: не
+	// отмечаем время индексации и не подчищаем удалённые файлы, иначе
+	// незатронутые записи выглядели бы как проверенные.
+	if !rep.Interrupted && !fresh {
 		if opts.Prune {
-			deleted, err = pruneMissing(s, root)
+			rep.Deleted, err = pruneMissing(s, root)
 			if err != nil {
 				return err
 			}
@@ -244,17 +261,18 @@ func RunIndex(args []string) error {
 		}
 	}
 
+	rep.DurationMS = time.Since(start).Milliseconds()
+
 	if !opts.Quiet {
-		dur := time.Since(start).Round(time.Second)
-		vectorsLabel := i18n.T("no", "нет")
-		if opts.Embed {
-			vectorsLabel = i18n.T("yes", "да")
+		printIndexSummary(os.Stderr, rep, cwd)
+	}
+	if opts.ReportJSON {
+		if err := printIndexReportJSON(os.Stdout, rep); err != nil {
+			return err
 		}
-		fmt.Fprintf(os.Stderr, i18n.T("done: %d files, %d changed, %d deleted, %d chunks in %s, vectors: %s\n", "готово: %d файлов, %d изменено, %d удалено, %d чанка за %s, векторы: %s\n"), len(candidates), changed, deleted, totalChunks, dur, vectorsLabel)
-		fmt.Fprintf(os.Stderr, i18n.T("database: %s\n", "база: %s\n"), shortenPath(dbPath, cwd))
 	}
 
-	return nil
+	return reportExitError(rep, opts.Strict)
 }
 
 // savePrefixes сохраняет в meta префиксы запроса и документа, заданные при

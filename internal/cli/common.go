@@ -103,3 +103,15 @@ func openStore(flagDB string) (*store.Store, string, error) {
 	}
 	return s, path, nil
 }
+
+// ExitError задаёт код завершения процесса явно - для случаев, когда
+// ненулевой код не означает внутреннюю ошибку: прерывание сигналом (130)
+// или обнаруженные ошибки файлов в строгом режиме.
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitError) Error() string { return e.Err.Error() }
+
+func (e *ExitError) Unwrap() error { return e.Err }

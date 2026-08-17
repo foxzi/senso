@@ -121,6 +121,8 @@ Flags:
 | `--prune` | `true` | remove files from the index that no longer exist on disk |
 | `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (only relevant with `--embed`) |
 | `--quiet` | `false` | suppress progress output |
+| `--strict` | `false` | exit with code 1 if at least one file could not be read or parsed (the report is still printed either way) |
+| `--report-json` | `false` | print a machine-readable indexing report as a single line of JSON to stdout |
 
 Constraints: `--chunk-size` > 0, `--overlap` >= 0 and less than
 `--chunk-size`, `--concurrency` > 0, `--max-file-size` > 0 — otherwise the
@@ -209,6 +211,62 @@ query matches neighbouring values of a row next to each other; the same
 holds for tables placed on a slide. The
 legacy `.doc` format (Word 97-2003) is not supported; convert such files
 to `.docx` or `.rtf`.
+
+#### Indexing report: `--strict`, `--report-json`
+
+An error on one file (unreadable, fails to parse as a document, walk
+error) does not stop indexing of the rest, but it is not silently
+dropped either — it goes into the report. Progress and the
+human-readable summary always go to stderr, so `--report-json` can be
+safely combined with `--quiet` and its stdout parsed by a script.
+
+The human-readable summary (stderr) splits files into new, updated,
+unchanged and deleted, and also prints a `skipped: N (code: N, ...)`
+line with skip reasons and a `failed to process: N` line with a list of
+paths (at most 10 lines, the rest shown as `... and N more`).
+
+`--report-json` prints a single line of JSON to stdout with these
+fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `scanned` | number | total files considered |
+| `indexed` | number | new files added to the index |
+| `updated` | number | changed files re-indexed |
+| `unchanged` | number | files whose content did not change (including those where only mtime and size were updated) |
+| `deleted` | number | files removed from the index (`--prune`) |
+| `chunks` | number | total chunks written |
+| `skipped` | number | total files skipped (see codes below) |
+| `skipped_by_code` | object | skip reason -> number of files; absent if nothing was skipped |
+| `failed` | array | objects `{path, code, message}`; always present, empty as `[]` |
+| `interrupted` | bool | indexing was interrupted by a SIGINT/SIGTERM signal |
+| `duration_ms` | number | indexing time in milliseconds |
+| `database` | string | path to the database file |
+| `vectors` | bool | the index contains vector embeddings (`--embed`) |
+
+Skip reason codes (`skipped_by_code`): `empty` (empty file, or no text
+could be extracted from the document), `too_large` (bigger than
+`--max-file-size`), `binary` (content not recognized as text),
+`vanished` (the file disappeared between scanning and processing),
+`no_schema` (rare: the first file under `--embed` produced no chunk at
+all).
+
+Error codes (`failed[].code`): `walk_failed` (tree walk error),
+`read_failed` (file read error), `extract_failed` (document parsing
+error, for example a corrupt `.docx`).
+
+```sh
+$ senso index --report-json --quiet .
+{"scanned":3,"indexed":1,"updated":0,"unchanged":0,"deleted":0,"chunks":1,"skipped":1,"skipped_by_code":{"binary":1},"failed":[{"path":"/tmp/w/broken.docx","code":"extract_failed","message":"zip: not a valid zip file"}],"interrupted":false,"duration_ms":2,"database":"/tmp/w/.senso/index.db","vectors":false}
+```
+
+Exit codes for `index`: `0` — success; `1` — an indexing error, or (with
+`--strict`) at least one entry in `failed`; `2` — argument parsing
+error; `130` — indexing interrupted by a SIGINT/SIGTERM signal. On
+interruption, `--prune` does not run and the last indexing time is not
+updated (the index is knowingly incomplete), while files processed
+before the signal remain fully in the index: there are no half-processed
+entries.
 
 ### `senso search [flags] query...`
 

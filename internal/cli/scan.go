@@ -90,7 +90,7 @@ func buildWalkOptions(opts indexOptions, root string) walk.Options {
 // scanFiles обходит root и возвращает отсортированный список абсолютных
 // путей файлов-кандидатов на индексацию с применёнными фильтрами.
 // Проверка текстовости содержимого здесь не делается.
-func scanFiles(root string, opts indexOptions) ([]string, error) {
+func scanFiles(root string, opts indexOptions, onError func(path string, err error)) ([]string, error) {
 	walkOpts := buildWalkOptions(opts, root)
 
 	// Все правила исключений (скрытые пути, секреты, шум, служебные
@@ -99,7 +99,7 @@ func scanFiles(root string, opts indexOptions) ([]string, error) {
 	err := walk.Walk(root, walkOpts, func(f walk.File) error {
 		result = append(result, text.Normalize(f.Path))
 		return nil
-	}, nil)
+	}, onError)
 	if err != nil {
 		return nil, err
 	}
@@ -109,20 +109,22 @@ func scanFiles(root string, opts indexOptions) ([]string, error) {
 }
 
 // readIndexable читает файл и готовит его содержимое к индексации:
-// пропускает пустые файлы, извлекает текст из офисных документов,
-// определяет бинарность, перекодирует однобайтовую кириллицу и приводит
-// текст к NFC. ok=false означает, что файл индексировать не нужно,
-// и это не является ошибкой.
-func readIndexable(path string, maxBytes int64) ([]byte, bool, error) {
+// отсеивает пустые, слишком большие и бинарные файлы, извлекает текст из
+// офисных документов, перекодирует однобайтовую кириллицу и приводит текст
+// к NFC. Второе значение - код причины пропуска (см. indexreport.go);
+// пустая строка означает, что файл нужно индексировать. Ошибки чтения и
+// разбора возвращаются как *fileFailure: они относятся к одному файлу и не
+// должны прерывать индексацию.
+func readIndexable(path string, maxBytes int64) ([]byte, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false, err
+		return nil, "", &fileFailure{Code: failRead, Err: err}
 	}
 	if len(data) == 0 {
-		return nil, false, nil
+		return nil, skipEmpty, nil
 	}
 	if maxBytes > 0 && int64(len(data)) > maxBytes {
-		return nil, false, nil
+		return nil, skipTooLarge, nil
 	}
 
 	if extract.Supports(path) {
@@ -131,18 +133,21 @@ func readIndexable(path string, maxBytes int64) ([]byte, bool, error) {
 
 	s, _, ok := text.Decode(data)
 	if !ok {
-		return nil, false, nil
+		return nil, skipBinary, nil
 	}
-	return []byte(s), true, nil
+	return []byte(s), "", nil
 }
 
 // extractIndexable достаёт текст из офисного документа. Повреждённый файл
-// пропускается так же, как бинарный: индексация продолжается, ошибка наружу
-// не выносится.
-func extractIndexable(path string, data []byte) ([]byte, bool, error) {
+// даёт ошибку с кодом extract_failed - раньше такие файлы молча исчезали
+// из индекса.
+func extractIndexable(path string, data []byte) ([]byte, string, error) {
 	s, err := extract.Text(path, data)
-	if err != nil || strings.TrimSpace(s) == "" {
-		return nil, false, nil
+	if err != nil {
+		return nil, "", &fileFailure{Code: failExtract, Err: err}
 	}
-	return []byte(text.Normalize(s)), true, nil
+	if strings.TrimSpace(s) == "" {
+		return nil, skipEmpty, nil
+	}
+	return []byte(text.Normalize(s)), "", nil
 }
