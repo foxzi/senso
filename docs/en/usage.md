@@ -114,6 +114,7 @@ Flags:
 | `--noisy-patterns <list>` | `""` | comma-separated list of glob patterns that replace the built-in list of noisy files |
 | `--chunk-size <n>` | `1200` | chunk size in runes |
 | `--overlap <n>` | `150` | chunk overlap in runes |
+| `--chunker <name>` | `auto` | chunk boundary strategy: `auto` (respect file structure) or `text` (paragraphs and lines only) |
 | `--query-prefix <s>` | `""` | prefix for search queries (only relevant with `--embed`) |
 | `--doc-prefix <s>` | `""` | prefix for documents during indexing (only relevant with `--embed`) |
 | `--max-file-size <mb>` | `10` | maximum file size in MB |
@@ -125,8 +126,9 @@ Flags:
 | `--report-json` | `false` | print a machine-readable indexing report as a single line of JSON to stdout |
 
 Constraints: `--chunk-size` > 0, `--overlap` >= 0 and less than
-`--chunk-size`, `--concurrency` > 0, `--max-file-size` > 0 — otherwise the
-command fails with an argument parsing error (exit code 2).
+`--chunk-size`, `--concurrency` > 0, `--max-file-size` > 0, `--chunker` is
+either `auto` or `text` — otherwise the command fails with an argument
+parsing error (exit code 2).
 
 Example:
 
@@ -211,6 +213,50 @@ query matches neighbouring values of a row next to each other; the same
 holds for tables placed on a slide. The
 legacy `.doc` format (Word 97-2003) is not supported; convert such files
 to `.docx` or `.rtf`.
+
+#### Chunk boundaries: `--chunker`
+
+Chunk size is measured in runes (`--chunk-size`, `--overlap`), but the
+boundary itself can be picked more sensibly than "exactly where the budget
+ran out". By default (`--chunker auto`) senso takes the file structure into
+account whenever it recognizes the file type:
+
+| File type | Boundaries |
+|---|---|
+| `.md`, `.markdown` | headings like `## Title`; inside a fenced code block a leading hash is not a heading |
+| `.go` | top-level `func`, `type`, `const`, `var` declarations and `//go:` directives |
+| `.py`, `.pyi` | `def`, `async def`, `class`, including indented methods |
+| `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts` | `function`, `class`, `export`, `module.exports`, plus `describe`, `it`, `test` blocks |
+| `.yaml`, `.yml` | top-level keys and list items, document separator `---` |
+| `.json` | top-level elements; a single-line (minified) file has no boundaries |
+
+A doc comment or decorator sitting immediately above a declaration belongs to
+the same chunk as the declaration: the boundary moves up past the comment
+instead of cutting it away from the code it describes.
+
+A structural boundary is a preference, not a hard rule:
+
+- a chunk never exceeds `--chunk-size`: a block that does not fit is split
+  further by paragraphs, then lines, and finally by rune count;
+- a boundary starts a new chunk only when the current one is at least half
+  full — otherwise a file of a dozen short functions would produce a dozen
+  tiny chunks, none of them useful on its own;
+- line ranges and overlap are computed the same way for every strategy, so
+  `senso show` and the line numbers in results behave exactly as before.
+
+Unknown file types, as well as `--chunker text`, fall back to the universal
+paragraph-and-line splitting — the same algorithm as before this flag
+existed. `--chunker text` is there when you want fully predictable splitting
+or want to compare search quality between strategies: the strategy only
+affects indexing, so changing it requires re-indexing (`senso index` rebuilds
+changed files; for a full rebuild remove `.senso`).
+
+Structural boundaries are cheap. On the senso tree itself (89 files, Go plus
+Markdown) `auto` produced 1593 chunks versus 1521 for `text` (+4.7%), and the
+database file grew by 0.3%. The payoff is that a chunk ends where a function
+or a section ends: in lexical search over that tree `auto` returns the whole
+declaration, while `text` answers the same queries with a fragment that also
+swallowed the tail of the neighboring declaration.
 
 #### Indexing report: `--strict`, `--report-json`
 
@@ -971,9 +1017,11 @@ indexed database or unexpectedly returning a different kind of result.
 - No literal "form to form" search (like `grep`) — all search, including
   phrases, is matched against stems; there is no flag for exact word form
   matching.
-- No syntax-aware chunking of code: files of any type are split into
-  chunks by rune count (`--chunk-size`/`--overlap`), with no understanding
-  of code structure (functions, classes, etc.).
+- Structural chunking is heuristic: senso looks at indentation and line
+  beginnings (`--chunker auto`, see above) rather than parsing syntax, so
+  function and class boundaries are approximate and only recognized for
+  Markdown, Go, Python, JS/TS, YAML and JSON; every other file type is still
+  split purely by text.
 - Databases created by previous versions of senso are incompatible with
   the current schema (the schema version is now 4). Any command
   (`index`, `search`, `status`, `rm`) refuses to work with such a

@@ -135,6 +135,8 @@ func RunIndex(args []string) error {
 
 	cwd, _ := os.Getwd()
 	start := time.Now()
+	// Значение флага уже проверено при разборе аргументов.
+	strategy, _ := chunk.ParseStrategy(opts.Chunker)
 
 	for i, path := range candidates {
 		if ctx.Err() != nil {
@@ -199,7 +201,7 @@ func RunIndex(args []string) error {
 		}
 
 		// actionReindex.
-		chunks := chunk.Split(string(content), opts.ChunkSize, opts.Overlap)
+		chunks := chunk.SplitFile(path, string(content), opts.ChunkSize, opts.Overlap, strategy)
 
 		var vectors [][]float32
 		if opts.Embed && len(chunks) > 0 {

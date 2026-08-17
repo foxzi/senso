@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"senso/internal/chunk"
 	"senso/internal/i18n"
 )
 
@@ -28,6 +29,7 @@ type indexOptions struct {
 	NoisyPatterns string
 	ChunkSize     int
 	Overlap       int
+	Chunker       string
 	QueryPrefix   string
 	DocPrefix     string
 	MaxFileSize   int
@@ -74,6 +76,7 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	fs.StringVar(&opts.Model, "model", "bge-m3", i18n.T("embedding model in Ollama (only applies with --embed)", "модель эмбеддингов в Ollama (действует только с --embed)"))
 	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
 	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
+	fs.StringVar(&opts.Chunker, "chunker", "auto", i18n.T("chunk boundary strategy: auto (respect file structure) or text (paragraphs and lines only)", "стратегия границ чанков: auto (учитывать структуру файла) или text (только абзацы и строки)"))
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))
 	fs.StringVar(&opts.DocPrefix, "doc-prefix", "", i18n.T("prefix for documents during indexing (only applies with --embed)", "префикс для документов при индексации (действует только с --embed)"))
 	fs.IntVar(&opts.Concurrency, "concurrency", 4, i18n.T("number of parallel embedding workers (only applies with --embed)", "число параллельных обработчиков эмбеддинга (действует только с --embed)"))
@@ -121,6 +124,9 @@ func parseIndexArgs(args []string) (indexOptions, error) {
 	}
 	if opts.MaxFileSize <= 0 {
 		return indexOptions{}, usagef("%s", i18n.T("--max-file-size must be greater than 0", "--max-file-size должен быть больше 0"))
+	}
+	if _, ok := chunk.ParseStrategy(opts.Chunker); !ok {
+		return indexOptions{}, usagef(i18n.T("--chunker: unknown strategy %q, expected auto or text", "--chunker: неизвестная стратегия %q, ожидается auto или text"), opts.Chunker)
 	}
 
 	return opts, nil

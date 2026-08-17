@@ -30,6 +30,9 @@ type unit struct {
 	text string
 	sep  string
 	off  int
+	// boundary означает, что кусок начинает структурный блок исходного файла
+	// и предпочтительно должен начать новый фрагмент.
+	boundary bool
 }
 
 // span - собранный фрагмент вместе с полуинтервалом [off, end) байтовых
@@ -57,6 +60,13 @@ type span struct {
 // Каждый возвращённый Chunk несёт диапазон строк исходного text, который он
 // покрывает; диапазон включает и перекрытие с предыдущим фрагментом.
 func Split(text string, size, overlap int) []Chunk {
+	return splitWith(text, size, overlap, nil)
+}
+
+// splitWith - общая реализация Split, дополненная списком структурных границ.
+// bounds - строго возрастающие байтовые смещения начал строк внутри text;
+// пустой список даёт чисто текстовое разбиение.
+func splitWith(text string, size, overlap int, bounds []int) []Chunk {
 	if size <= 0 {
 		return nil
 	}
@@ -69,7 +79,7 @@ func Split(text string, size, overlap int) []Chunk {
 		overlap = size / 2
 	}
 
-	units := splitUnits(text, size)
+	units := splitBlocks(text, size, bounds)
 	packed := pack(units, size)
 	spans := applyOverlap(packed, overlap)
 
@@ -89,10 +99,42 @@ func Split(text string, size, overlap int) []Chunk {
 	return chunks
 }
 
-// splitUnits разбирает текст на куски, каждый из которых помещается в size.
-func splitUnits(text string, size int) []unit {
+// splitBlocks разбирает текст на куски, начиная новый блок на каждой
+// структурной границе. Смещения кусков остаются смещениями в исходном тексте,
+// поэтому диапазоны строк и перекрытие считаются одинаково для любой стратегии.
+func splitBlocks(text string, size int, bounds []int) []unit {
+	if len(bounds) == 0 {
+		return splitUnits(text, size, 0)
+	}
 	var units []unit
-	paraOff := 0
+	prev := 0
+	pending := false
+	for _, b := range append(bounds, len(text)) {
+		if b <= prev || b > len(text) {
+			continue
+		}
+		block := splitUnits(text[prev:b], size, prev)
+		if len(block) > 0 && pending {
+			// Граница начинается со новой строки, поэтому кусок
+			// приклеивается к предыдущему через перевод строки, а не
+			// вплотную - иначе склеились бы две разные строки файла.
+			block[0].sep = "\n"
+			block[0].boundary = true
+		}
+		units = append(units, block...)
+		// Пустой блок (только пробелы) не теряет границу: её получит
+		// первый непустой блок после него.
+		pending = len(block) > 0 || pending
+		prev = b
+	}
+	return units
+}
+
+// splitUnits разбирает текст на куски, каждый из которых помещается в size.
+// base - смещение text в исходном файле, оно прибавляется к смещениям кусков.
+func splitUnits(text string, size, base int) []unit {
+	var units []unit
+	paraOff := base
 	for i, para := range strings.Split(text, "\n\n") {
 		off := paraOff
 		paraOff += len(para) + 2
@@ -104,7 +146,7 @@ func splitUnits(text string, size int) []unit {
 			continue
 		}
 		if utf8.RuneCountInString(para) <= size {
-			units = append(units, unit{para, sep, off})
+			units = append(units, unit{text: para, sep: sep, off: off})
 			continue
 		}
 		// Абзац не помещается целиком - опускаемся до строк.
@@ -117,7 +159,7 @@ func splitUnits(text string, size int) []unit {
 				lineSep = sep
 			}
 			if utf8.RuneCountInString(line) <= size {
-				units = append(units, unit{line, lineSep, lo})
+				units = append(units, unit{text: line, sep: lineSep, off: lo})
 				continue
 			}
 			// И строка не помещается - режем по счётчику рун.
@@ -127,7 +169,7 @@ func splitUnits(text string, size int) []unit {
 				if k == 0 {
 					pieceSep = lineSep
 				}
-				units = append(units, unit{piece, pieceSep, pieceOff})
+				units = append(units, unit{text: piece, sep: pieceSep, off: pieceOff})
 				pieceOff += len(piece)
 			}
 		}
@@ -156,7 +198,12 @@ func hardSplit(s string, size int) []string {
 }
 
 // pack жадно склеивает куски, пока результат помещается в size.
+//
+// Структурная граница закрывает текущий фрагмент только когда тот заполнен
+// хотя бы наполовину: короткие функции и мелкие секции остаются вместе,
+// а крупные блоки начинаются с новой границы.
 func pack(units []unit, size int) []span {
+	minFill := size / 2
 	var out []span
 	var cur strings.Builder
 	curLen := 0
@@ -180,7 +227,7 @@ func pack(units []unit, size int) []span {
 		}
 		sepLen := utf8.RuneCountInString(sep)
 
-		if curLen > 0 && curLen+sepLen+uLen > size {
+		if curLen > 0 && (curLen+sepLen+uLen > size || (u.boundary && curLen >= minFill)) {
 			flush()
 			sep, sepLen = "", 0
 			curOff = u.off

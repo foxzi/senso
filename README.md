@@ -29,6 +29,9 @@ predictable exit codes.
   referenced from `search` output, including surrounding chunks with
   `--before`/`--after` — the only way to read the extracted text of binary
   formats like `.docx`, `.epub` or `.pptx`.
+- Structure-aware chunking (`--chunker auto`, on by default): chunk
+  boundaries follow Markdown headings, Go/Python/JS declarations and
+  top-level YAML/JSON keys instead of cutting mid-expression.
 - Incremental indexing: unchanged files are skipped by mtime/size, changed
   content is detected by a content hash.
 - Indexes `.docx`, `.odt`, `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`,
