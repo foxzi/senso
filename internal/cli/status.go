@@ -61,10 +61,15 @@ func RunStatus(args []string) error {
 		dbSize = info.Size()
 	}
 
+	// Параметры нарезки нужны, чтобы повторную индексацию можно было
+	// запустить теми же флагами: index отвергает другие. В базах, созданных
+	// до появления этих ключей, их нет - тогда строка просто не печатается.
+	params, _, _ := loadChunkParams(s)
+
 	if opts.JSON {
-		return printStatusJSON(path, dbSize, stats)
+		return printStatusJSON(path, dbSize, stats, params)
 	}
-	printStatusText(path, dbSize, stats)
+	printStatusText(path, dbSize, stats, params)
 	return nil
 }
 
@@ -81,11 +86,14 @@ type statusJSON struct {
 	Vectors   int            `json:"vectors"`
 	SizeBytes int64          `json:"size_bytes"`
 	IndexedAt string         `json:"indexed_at"`
+	Chunker   string         `json:"chunker,omitempty"`
+	ChunkSize int            `json:"chunk_size,omitempty"`
+	Overlap   int            `json:"overlap,omitempty"`
 	Roots     map[string]int `json:"roots,omitempty"`
 }
 
 // printStatusJSON печатает статистику одним JSON-объектом.
-func printStatusJSON(path string, dbSize int64, stats store.Stats) error {
+func printStatusJSON(path string, dbSize int64, stats store.Stats, params chunkParams) error {
 	out := statusJSON{
 		DB:        path,
 		Root:      stats.Root,
@@ -98,6 +106,9 @@ func printStatusJSON(path string, dbSize int64, stats store.Stats) error {
 		Vectors:   stats.Vectors,
 		SizeBytes: dbSize,
 		IndexedAt: stats.IndexedAt,
+		Chunker:   params.Chunker,
+		ChunkSize: params.ChunkSize,
+		Overlap:   params.Overlap,
 		Roots:     stats.Roots,
 	}
 	data, err := json.MarshalIndent(out, "", "  ")
@@ -127,7 +138,7 @@ func indexModeText(stats store.Stats) string {
 }
 
 // printStatusText печатает статистику в человекочитаемом текстовом виде.
-func printStatusText(path string, dbSize int64, stats store.Stats) {
+func printStatusText(path string, dbSize int64, stats store.Stats, params chunkParams) {
 	fmt.Printf(i18n.T("database:       %s\n", "база данных:    %s\n"), path)
 	fmt.Printf(i18n.T("root:           %s\n", "корень:         %s\n"), stats.Root)
 	fmt.Printf(i18n.T("mode:           %s\n", "режим:          %s\n"), indexModeText(stats))
@@ -140,6 +151,10 @@ func printStatusText(path string, dbSize int64, stats store.Stats) {
 	fmt.Printf(i18n.T("fts rows:       %d\n", "лексич. строк:  %d\n"), stats.FTSRows)
 	if stats.Vectors > 0 {
 		fmt.Printf(i18n.T("vectors:        %d\n", "векторов:       %d\n"), stats.Vectors)
+	}
+	if params.Chunker != "" {
+		fmt.Printf(i18n.T("chunking:       %s, size %d, overlap %d\n", "нарезка:        %s, размер %d, перекрытие %d\n"),
+			params.Chunker, params.ChunkSize, params.Overlap)
 	}
 	fmt.Printf(i18n.T("db size:        %s\n", "размер базы:    %s\n"), humanSize(dbSize))
 	fmt.Printf(i18n.T("indexed at:     %s\n", "индексировано:  %s\n"), stats.IndexedAt)

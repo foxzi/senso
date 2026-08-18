@@ -59,6 +59,15 @@ func addSelectionFlags(fs *flag.FlagSet, opts *indexOptions) {
 	fs.BoolVar(&opts.Quiet, "quiet", false, i18n.T("do not print progress and summary", "не выводить прогресс и сводку"))
 }
 
+// addChunkFlags объявляет флаги нарезки на чанки. Они общие для index и
+// check: check сравнивает их с параметрами, записанными в базе, поэтому
+// набор и значения по умолчанию обязаны совпадать с index.
+func addChunkFlags(fs *flag.FlagSet, opts *indexOptions) {
+	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
+	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
+	fs.StringVar(&opts.Chunker, "chunker", "auto", i18n.T("chunk boundary strategy: auto (respect file structure) or text (paragraphs and lines only)", "стратегия границ чанков: auto (учитывать структуру файла) или text (только абзацы и строки)"))
+}
+
 // indexFlagSet создаёт FlagSet подкоманды index, объявляет в opts все её
 // флаги и возвращает FlagSet без вызова Parse. Используется как при разборе
 // аргументов, так и при построении текста справки - это единственное место,
@@ -74,9 +83,7 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	addSelectionFlags(fs, opts)
 	fs.BoolVar(&opts.Embed, "embed", false, i18n.T("build vector embeddings via Ollama (without this flag indexing is fully local and lexical, Ollama is not required)", "строить векторные эмбеддинги через Ollama (без флага индексация полностью локальная, лексическая, Ollama не требуется)"))
 	fs.StringVar(&opts.Model, "model", "bge-m3", i18n.T("embedding model in Ollama (only applies with --embed)", "модель эмбеддингов в Ollama (действует только с --embed)"))
-	fs.IntVar(&opts.ChunkSize, "chunk-size", 1200, i18n.T("chunk size in runes", "размер чанка в рунах"))
-	fs.IntVar(&opts.Overlap, "overlap", 150, i18n.T("chunk overlap in runes", "перекрытие чанков в рунах"))
-	fs.StringVar(&opts.Chunker, "chunker", "auto", i18n.T("chunk boundary strategy: auto (respect file structure) or text (paragraphs and lines only)", "стратегия границ чанков: auto (учитывать структуру файла) или text (только абзацы и строки)"))
+	addChunkFlags(fs, opts)
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))
 	fs.StringVar(&opts.DocPrefix, "doc-prefix", "", i18n.T("prefix for documents during indexing (only applies with --embed)", "префикс для документов при индексации (действует только с --embed)"))
 	fs.IntVar(&opts.Concurrency, "concurrency", 4, i18n.T("number of parallel embedding workers (only applies with --embed)", "число параллельных обработчиков эмбеддинга (действует только с --embed)"))

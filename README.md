@@ -31,7 +31,10 @@ predictable exit codes.
   formats like `.docx`, `.epub` or `.pptx`.
 - Structure-aware chunking (`--chunker auto`, on by default): chunk
   boundaries follow Markdown headings, Go/Python/JS declarations and
-  top-level YAML/JSON keys instead of cutting mid-expression.
+  top-level YAML/JSON keys instead of cutting mid-expression. `--chunker`,
+  `--chunk-size` and `--overlap` are locked to the index once built;
+  `index` refuses to run with different values (remove `.senso` to change
+  them).
 - Incremental indexing: unchanged files are skipped by mtime/size, changed
   content is detected by a content hash.
 - Indexes `.docx`, `.odt`, `.ods`, `.odp`, `.xlsx`, `.pptx`, `.rtf`, `.fb2`,

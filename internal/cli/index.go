@@ -73,6 +73,14 @@ func RunIndex(args []string) error {
 		}
 	}
 
+	// Параметры нарезки сверяем до первой записи: продолжать индексацию
+	// с другой нарезкой нельзя, иначе база смешает чанки двух стратегий.
+	if !fresh {
+		if err := ensureChunkParams(s, opts); err != nil {
+			return err
+		}
+	}
+
 	// Префиксы для эмбеддингов сохраняем в meta безусловно (в том числе
 	// пустые), чтобы повторная индексация с новыми префиксами замещала
 	// старые значения. Пишем сразу, если схема уже существует (!fresh);
@@ -91,6 +99,9 @@ func RunIndex(args []string) error {
 			return err
 		}
 		fresh = false
+		if err := saveChunkParams(s, wantChunkParams(opts)); err != nil {
+			return err
+		}
 	}
 
 	// Отчёт создаётся до обхода дерева: ошибки чтения каталогов и
@@ -220,6 +231,9 @@ func RunIndex(args []string) error {
 					return err
 				}
 				fresh = false
+				if err := saveChunkParams(s, wantChunkParams(opts)); err != nil {
+					return err
+				}
 				if err := savePrefixes(s, opts); err != nil {
 					return err
 				}

@@ -248,8 +248,24 @@ Unknown file types, as well as `--chunker text`, fall back to the universal
 paragraph-and-line splitting — the same algorithm as before this flag
 existed. `--chunker text` is there when you want fully predictable splitting
 or want to compare search quality between strategies: the strategy only
-affects indexing, so changing it requires re-indexing (`senso index` rebuilds
-changed files; for a full rebuild remove `.senso`).
+affects the contents of the index, so it cannot be swapped silently halfway
+through.
+
+Chunking parameters (`--chunker`, `--chunk-size`, `--overlap`) are stored in
+the database at indexing time (`senso status` prints them). Running
+`senso index` on an existing database with different values for these flags
+makes the command refuse to run (exit code 1):
+
+```
+index was built with other chunking parameters (--chunker auto != text); reindex from scratch (remove .senso) or repeat the parameters of the index
+```
+
+Otherwise the changed files would get chunks cut one way and the untouched
+files would keep the old cut, with no way to tell from the index itself. The
+way out is either to repeat the parameters the index was built with, or
+remove `.senso` and reindex from scratch. Databases built by senso versions
+that did not record these parameters are not rejected — the values are
+simply written into them.
 
 Structural boundaries are cheap. On the senso tree itself (89 files, Go plus
 Markdown) `auto` produced 1593 chunks versus 1521 for `text` (+4.7%), and the
@@ -684,6 +700,9 @@ Flags:
   "vectors": 0,
   "size_bytes": 53248,
   "indexed_at": "2026-08-09T12:20:53+03:00",
+  "chunker": "auto",
+  "chunk_size": 1200,
+  "overlap": 150,
   "roots": {"/abs/path": 2, "/abs/path/sub": 1}
 }
 ```
@@ -694,6 +713,16 @@ vectors) — this JSON value is never translated. The human-readable output
 shows the same information as a localized `mode: lexical only` /
 `mode: lexical and semantic` line (English by default, Russian if the
 output language is Russian — see "Output language" above).
+
+The `chunker`, `chunk_size` and `overlap` fields are the chunking
+parameters recorded at the last indexing run (see `--chunker`,
+`--chunk-size` and `--overlap` on `senso index`); they can be copied into
+the next `senso index` run without risking a refusal over mismatched
+parameters. The human-readable output shows them as a
+`chunking:       auto, size 1200, overlap 150` line
+(`нарезка:        auto, размер 1200, перекрытие 150` in Russian). The
+fields and the line are absent when the database was built by a senso
+version that did not yet record these parameters.
 
 ### `senso check [flags] [path]`
 
@@ -724,11 +753,16 @@ Flags:
 |---|---|---|
 | `--db <file>` | `""` | path to the database file |
 | `--hash` | `false` | compare contents by hash instead of mtime and size |
+| `--chunk-size <n>` | `1200` | chunk size in runes — checked against the parameters recorded in the index |
+| `--overlap <n>` | `150` | chunk overlap in runes — checked against the parameters recorded in the index |
+| `--chunker <name>` | `auto` | chunk boundary strategy (`auto` or `text`) — checked against the parameters recorded in the index |
 | `--json` | `false` | print the result as JSON |
 | `--quiet` | `false` | do not print the human-readable summary |
 
 The remaining file selection flags are the same as for `index` (see the
-`senso index` flag table above).
+`senso index` flag table above). The defaults for `--chunker`,
+`--chunk-size` and `--overlap` match `index`: unless given explicitly,
+`check` compares the index against exactly these values.
 
 By default a file counts as changed when its modification time or size
 differs: that is fast and reads no contents. With `--hash`, a metadata
@@ -766,13 +800,17 @@ database: .senso/index.db
 | `failed` | array | objects `{path, code, message}` for files whose state could not be checked |
 | `indexed_at` | string | time of the last indexing run |
 | `model` | string | embedding model of the index (empty for lexical) |
+| `chunker` | string | chunking strategy the index was built with (empty if the database was built by a senso version that did not record this parameter) |
 | `vectors` | bool | the index contains vectors |
 | `database` | string | path to the database file (empty when no database was found) |
 
 Codes in `issues`: `no_index` (no index database found — every discovered
 file counts as `unindexed`), `model_mismatch` (the index was built with a
 different embedding model, checked only with `--embed`), `vectors_missing`
-(`--embed` was requested but the index has no vectors).
+(`--embed` was requested but the index has no vectors), `chunk_params_mismatch`
+(the index was built with a different `--chunker`/`--chunk-size`/`--overlap`
+than requested for the check — `senso index` would refuse to run with the
+same flags too, see `senso index` above).
 
 `excluded_by_reason` answers right away why a file left the selection:
 `gitignore: 1`, for example, means an indexed file was caught by a new
@@ -784,7 +822,7 @@ nothing is simply known about such a file.
 
 ```sh
 $ senso check --json --quiet
-{"fresh":false,"mode":"mtime","scanned":3,"unchanged":2,"changed":1,"missing":0,"unindexed":0,"excluded":0,"issues":[],"failed":[],"indexed_at":"2026-08-17T21:21:44+03:00","model":"","vectors":false,"database":"/tmp/w/.senso/index.db"}
+{"fresh":false,"mode":"mtime","scanned":3,"unchanged":2,"changed":1,"missing":0,"unindexed":0,"excluded":0,"issues":[],"failed":[],"indexed_at":"2026-08-17T21:21:44+03:00","model":"","chunker":"auto","vectors":false,"database":"/tmp/w/.senso/index.db"}
 ```
 
 ### `senso rm <path>`

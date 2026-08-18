@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"senso/internal/dbpath"
 	"senso/internal/i18n"
@@ -32,6 +33,8 @@ const (
 	issueModelMismatch = "model_mismatch"
 	// issueVectorsMissing - запрошен --embed, а векторов в индексе нет.
 	issueVectorsMissing = "vectors_missing"
+	// issueChunkParamsMismatch - индекс нарезан другими параметрами.
+	issueChunkParamsMismatch = "chunk_params_mismatch"
 )
 
 // checkOptions - флаги подкоманды check. Правила отбора файлов те же, что
@@ -50,6 +53,7 @@ func checkFlagSet(opts *checkOptions) *flag.FlagSet {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	addSelectionFlags(fs, &opts.indexOptions)
+	addChunkFlags(fs, &opts.indexOptions)
 	fs.BoolVar(&opts.Embed, "embed", false, i18n.T("also check compatibility with semantic search: the index must contain vectors built by the expected model", "дополнительно проверять совместимость с семантическим поиском: в индексе должны быть векторы, построенные ожидаемой моделью"))
 	fs.StringVar(&opts.Model, "model", "bge-m3", i18n.T("embedding model the index is expected to be built with (only applies with --embed)", "модель эмбеддингов, которой должен быть построен индекс (действует только с --embed)"))
 	fs.BoolVar(&opts.Hash, "hash", false, i18n.T("compare file contents by hash instead of mtime and size (slower, but does not report rewritten-in-place files as changed)", "сравнивать содержимое файлов по хэшу, а не по mtime и размеру (медленнее, зато файлы с тем же содержимым не считаются изменёнными)"))
@@ -124,8 +128,11 @@ type checkReport struct {
 
 	IndexedAt string `json:"indexed_at"`
 	Model     string `json:"model"`
-	Vectors   bool   `json:"vectors"`
-	Database  string `json:"database"`
+	// Chunker - стратегия нарезки, которой построен индекс (пустая
+	// строка, если база создана версией senso без этой записи).
+	Chunker  string `json:"chunker,omitempty"`
+	Vectors  bool   `json:"vectors"`
+	Database string `json:"database"`
 }
 
 // newCheckReport создаёт отчёт с непустыми слайсами, чтобы в JSON они
@@ -244,6 +251,18 @@ func collectIndexState(s *store.Store, opts checkOptions, rep *checkReport) erro
 
 	if indexedAt, err := s.GetMeta("indexed_at"); err == nil {
 		rep.IndexedAt = indexedAt
+	}
+
+	// Параметры нарезки сравниваем с записанными в базе: индексация с
+	// другими параметрами смешала бы в базе чанки двух стратегий, поэтому
+	// index её отвергнет, а check предупреждает об этом заранее. Базы,
+	// созданные до появления этих ключей, параметров не содержат -
+	// сравнивать не с чем.
+	if stored, ok, err := loadChunkParams(s); err == nil && ok {
+		rep.Chunker = stored.Chunker
+		if diff := chunkParamsDiff(stored, wantChunkParams(opts.indexOptions)); len(diff) > 0 {
+			rep.addIssue(issueChunkParamsMismatch, fmt.Sprintf(i18n.T("index was built with other chunking parameters: %s", "индекс построен с другими параметрами нарезки: %s"), strings.Join(diff, ", ")))
+		}
 	}
 
 	// Модель и векторы важны только при --embed: без него поиск
