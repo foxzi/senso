@@ -509,14 +509,20 @@ func TestE2EHiddenFilesAndSecrets(t *testing.T) {
 		t.Errorf("--exclude не убрал .env: %v", got)
 	}
 
-	// check с теми же правилами отбора видит индекс свежим, а без них
-	// сообщает, что часть проиндексированного теперь исключена.
+	// check повторяет правила отбора, записанные при индексации, поэтому
+	// видит индекс свежим и с явными флагами, и без них.
 	if code, chk := runCheckJSON(t, secretDB, root, "--include-hidden", ".env,id_rsa"); code != exitOK || !chk.Fresh {
 		t.Errorf("check с теми же флагами: код = %d, fresh = %v (%+v)", code, chk.Fresh, chk)
 	}
-	code, chk := runCheckJSON(t, secretDB, root)
+	if code, chk := runCheckJSON(t, secretDB, root); code != exitOK || !chk.Fresh {
+		t.Errorf("check без флагов: код = %d, fresh = %v (%+v)", code, chk.Fresh, chk)
+	}
+
+	// Явно заданные другие правила - это намерение переиндексировать
+	// дерево иначе: тогда часть проиндексированного оказывается исключена.
+	code, chk := runCheckJSON(t, secretDB, root, "--include-hidden", "")
 	if code != exitStale || chk.Excluded != 2 {
-		t.Errorf("check без флагов включения: код = %d, excluded = %d, ожидались %d и 2",
+		t.Errorf("check с другими правилами отбора: код = %d, excluded = %d, ожидались %d и 2",
 			code, chk.Excluded, exitStale)
 	}
 }

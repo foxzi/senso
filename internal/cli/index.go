@@ -99,7 +99,7 @@ func RunIndex(args []string) error {
 			return err
 		}
 		fresh = false
-		if err := saveChunkParams(s, wantChunkParams(opts)); err != nil {
+		if err := saveIndexParams(s, opts); err != nil {
 			return err
 		}
 	}
@@ -231,7 +231,7 @@ func RunIndex(args []string) error {
 					return err
 				}
 				fresh = false
-				if err := saveChunkParams(s, wantChunkParams(opts)); err != nil {
+				if err := saveIndexParams(s, opts); err != nil {
 					return err
 				}
 				if err := savePrefixes(s, opts); err != nil {

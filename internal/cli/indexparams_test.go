@@ -141,3 +141,46 @@ func TestCheckReportsChunkParamsMismatch(t *testing.T) {
 		t.Errorf("other chunk size: exit = %d, want %d", code, exitStale)
 	}
 }
+
+// TestCheckUsesStoredChunkParams проверяет, что check без явных флагов
+// нарезки берёт их из базы и не сообщает о ложном расхождении.
+func TestCheckUsesStoredChunkParams(t *testing.T) {
+	dir := openIndexedDir(t, "--chunker", "text", "--chunk-size", "800")
+
+	if code := runCheckIn(t, dir, "--quiet"); code != 0 {
+		t.Errorf("check without flags: exit = %d, want 0", code)
+	}
+	if code := runCheckIn(t, dir, "--quiet", "--chunker", "auto"); code != exitStale {
+		t.Errorf("check with another chunker: exit = %d, want %d", code, exitStale)
+	}
+}
+
+// TestCheckUsesStoredSelection проверяет, что правила отбора файлов тоже
+// берутся из базы: иначе проиндексированные скрытые файлы выглядели бы
+// исключёнными и индекс считался бы устаревшим.
+func TestCheckUsesStoredSelection(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".hidden.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(prev)
+
+	if err := RunIndex([]string{"--quiet", "--hidden", "."}); err != nil {
+		t.Fatalf("RunIndex: %v", err)
+	}
+
+	if code := runCheckIn(t, dir, "--quiet"); code != 0 {
+		t.Errorf("check without flags: exit = %d, want 0", code)
+	}
+	if code := runCheckIn(t, dir, "--quiet", "--hidden=false"); code != exitStale {
+		t.Errorf("check with --hidden=false: exit = %d, want %d", code, exitStale)
+	}
+}

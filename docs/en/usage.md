@@ -267,6 +267,13 @@ remove `.senso` and reindex from scratch. Databases built by senso versions
 that did not record these parameters are not rejected — the values are
 simply written into them.
 
+The file selection rules (`--ext`, `--exclude`, `--no-gitignore`, `--hidden`,
+`--include-hidden`, `--noisy`, `--include-noisy`, `--noisy-patterns`,
+`--max-file-size`) the index was built with are stored in the database too,
+and updated on every indexing run: `senso check` uses them as defaults so
+that repeating the indexing flags is not required (see `senso check`
+below).
+
 Structural boundaries are cheap. On the senso tree itself (89 files, Go plus
 Markdown) `auto` produced 1593 chunks versus 1521 for `text` (+4.7%), and the
 database file grew by 0.3%. The payoff is that a chunk ends where a function
@@ -753,16 +760,32 @@ Flags:
 |---|---|---|
 | `--db <file>` | `""` | path to the database file |
 | `--hash` | `false` | compare contents by hash instead of mtime and size |
-| `--chunk-size <n>` | `1200` | chunk size in runes — checked against the parameters recorded in the index |
-| `--overlap <n>` | `150` | chunk overlap in runes — checked against the parameters recorded in the index |
-| `--chunker <name>` | `auto` | chunk boundary strategy (`auto` or `text`) — checked against the parameters recorded in the index |
+| `--chunk-size <n>` | `1200` | chunk size in runes; if not given explicitly, taken from the parameters recorded in the index |
+| `--overlap <n>` | `150` | chunk overlap in runes; if not given explicitly, taken from the parameters recorded in the index |
+| `--chunker <name>` | `auto` | chunk boundary strategy (`auto` or `text`); if not given explicitly, taken from the parameters recorded in the index |
 | `--json` | `false` | print the result as JSON |
 | `--quiet` | `false` | do not print the human-readable summary |
 
-The remaining file selection flags are the same as for `index` (see the
-`senso index` flag table above). The defaults for `--chunker`,
-`--chunk-size` and `--overlap` match `index`: unless given explicitly,
-`check` compares the index against exactly these values.
+The remaining file selection flags are the same as for `index` (`--ext`,
+`--exclude`, `--no-gitignore`, `--hidden`, `--include-hidden`, `--noisy`,
+`--include-noisy`, `--noisy-patterns`, `--max-file-size`; see the
+`senso index` flag table above).
+
+Any of these selection flags, as well as `--chunker`, `--chunk-size` and
+`--overlap`, are taken from the database when not given explicitly on the
+command line — from the same rules `index` used to build the checked
+index. A flag given explicitly always wins over the value stored in the
+database: that is how you signal the intent to reindex the tree with
+different rules. For example, if the index was built with `--hidden`,
+`senso check` with no flags exits with code `0` (the index is up to
+date), while `senso check --hidden=false` reports the previously indexed
+hidden files as `excluded` and exits with code `3`. The same applies to
+chunking parameters: `check` without `--chunker` does not report a
+mismatch against an index built with `--chunker text` — `chunk_params_mismatch`
+only appears when the user explicitly requested different chunking
+parameters. Databases built by senso versions that did not record these
+parameters work as before: there is nothing to fall back to, so the
+defaults from the table above are used.
 
 By default a file counts as changed when its modification time or size
 differs: that is fast and reads no contents. With `--hash`, a metadata
@@ -808,9 +831,10 @@ Codes in `issues`: `no_index` (no index database found — every discovered
 file counts as `unindexed`), `model_mismatch` (the index was built with a
 different embedding model, checked only with `--embed`), `vectors_missing`
 (`--embed` was requested but the index has no vectors), `chunk_params_mismatch`
-(the index was built with a different `--chunker`/`--chunk-size`/`--overlap`
-than requested for the check — `senso index` would refuse to run with the
-same flags too, see `senso index` above).
+(the user explicitly requested a `--chunker`/`--chunk-size`/`--overlap`
+different from the one recorded in the index — `senso index` would refuse
+to run with the same flags too, see `senso index` above; without these
+flags the check silently uses the values from the index).
 
 `excluded_by_reason` answers right away why a file left the selection:
 `gitignore: 1`, for example, means an indexed file was caught by a new

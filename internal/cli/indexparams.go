@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,6 +19,10 @@ const (
 	metaChunker   = "chunker"
 	metaChunkSize = "chunk_size"
 	metaOverlap   = "overlap"
+	// metaSelection - правила отбора файлов в виде JSON: check берёт их
+	// как значения по умолчанию, чтобы не требовать повторения флагов
+	// индексации.
+	metaSelection = "selection"
 )
 
 // chunkParams - параметры нарезки, влияющие на содержимое индекса.
@@ -109,13 +114,136 @@ func ensureChunkParams(s *store.Store, opts indexOptions) error {
 		return err
 	}
 	if !ok {
-		return saveChunkParams(s, want)
+		return saveIndexParams(s, opts)
 	}
 	if diff := chunkParamsDiff(stored, want); len(diff) > 0 {
 		return fmt.Errorf(i18n.T(
 			"index was built with other chunking parameters (%s); reindex from scratch (remove .senso) or repeat the parameters of the index",
 			"индекс построен с другими параметрами нарезки (%s); переиндексируйте базу заново (удалите .senso) или повторите параметры индекса",
 		), strings.Join(diff, ", "))
+	}
+	return saveSelectionParams(s, wantSelectionParams(opts))
+}
+
+// selectionParams - правила отбора файлов, с которыми построен индекс.
+// Хранятся одним JSON-значением: набор флагов меняется от версии к версии,
+// а отдельный ключ meta на каждый флаг быстро превратился бы в свалку.
+type selectionParams struct {
+	Ext           string `json:"ext,omitempty"`
+	Exclude       string `json:"exclude,omitempty"`
+	NoGitignore   bool   `json:"no_gitignore,omitempty"`
+	Hidden        bool   `json:"hidden,omitempty"`
+	IncludeHidden string `json:"include_hidden,omitempty"`
+	Noisy         bool   `json:"noisy,omitempty"`
+	IncludeNoisy  string `json:"include_noisy,omitempty"`
+	NoisyPatterns string `json:"noisy_patterns,omitempty"`
+	MaxFileSize   int    `json:"max_file_size,omitempty"`
+}
+
+// wantSelectionParams собирает правила отбора из флагов команды.
+func wantSelectionParams(opts indexOptions) selectionParams {
+	return selectionParams{
+		Ext:           opts.Ext,
+		Exclude:       opts.Exclude,
+		NoGitignore:   opts.NoGitignore,
+		Hidden:        opts.Hidden,
+		IncludeHidden: opts.IncludeHidden,
+		Noisy:         opts.Noisy,
+		IncludeNoisy:  opts.IncludeNoisy,
+		NoisyPatterns: opts.NoisyPatterns,
+		MaxFileSize:   opts.MaxFileSize,
+	}
+}
+
+// loadSelectionParams читает правила отбора из базы. Второе возвращаемое
+// значение - признак того, что правила записаны: у баз, созданных без них,
+// подставлять нечего.
+func loadSelectionParams(s *store.Store) (selectionParams, bool, error) {
+	raw, err := s.GetMeta(metaSelection)
+	if err != nil || raw == "" {
+		return selectionParams{}, false, err
+	}
+	var sel selectionParams
+	if err := json.Unmarshal([]byte(raw), &sel); err != nil {
+		// Испорченная запись - не повод отказывать в проверке: просто
+		// работаем по флагам команды, как раньше.
+		return selectionParams{}, false, nil
+	}
+	return sel, true, nil
+}
+
+// saveSelectionParams записывает правила отбора в meta.
+func saveSelectionParams(s *store.Store, sel selectionParams) error {
+	data, err := json.Marshal(sel)
+	if err != nil {
+		return err
+	}
+	return s.SetMeta(metaSelection, string(data))
+}
+
+// saveIndexParams сохраняет в meta все параметры, влияющие на состав
+// индекса: нарезку и правила отбора файлов.
+func saveIndexParams(s *store.Store, opts indexOptions) error {
+	if err := saveChunkParams(s, wantChunkParams(opts)); err != nil {
+		return err
+	}
+	return saveSelectionParams(s, wantSelectionParams(opts))
+}
+
+// applyStoredParams подставляет параметры индексации из базы вместо флагов,
+// которые пользователь не задал явно. Без этого "senso check" пришлось бы
+// каждый раз повторять флаги индексации: иначе, например, скрытые файлы
+// индекса выглядели бы исключёнными и проверка ложно считала бы его
+// устаревшим. Явно заданный флаг всегда сильнее записи в базе - так
+// проверяют намерение переиндексировать дерево по другим правилам.
+func applyStoredParams(s *store.Store, opts *checkOptions) error {
+	setByUser := func(name string) bool { return opts.setFlags[name] }
+
+	if chunkP, ok, err := loadChunkParams(s); err != nil {
+		return err
+	} else if ok {
+		if !setByUser("chunker") {
+			opts.Chunker = chunkP.Chunker
+		}
+		if !setByUser("chunk-size") {
+			opts.ChunkSize = chunkP.ChunkSize
+		}
+		if !setByUser("overlap") {
+			opts.Overlap = chunkP.Overlap
+		}
+	}
+
+	sel, ok, err := loadSelectionParams(s)
+	if err != nil || !ok {
+		return err
+	}
+
+	if !setByUser("ext") {
+		opts.Ext = sel.Ext
+	}
+	if !setByUser("exclude") {
+		opts.Exclude = sel.Exclude
+	}
+	if !setByUser("no-gitignore") {
+		opts.NoGitignore = sel.NoGitignore
+	}
+	if !setByUser("hidden") {
+		opts.Hidden = sel.Hidden
+	}
+	if !setByUser("include-hidden") {
+		opts.IncludeHidden = sel.IncludeHidden
+	}
+	if !setByUser("noisy") {
+		opts.Noisy = sel.Noisy
+	}
+	if !setByUser("include-noisy") {
+		opts.IncludeNoisy = sel.IncludeNoisy
+	}
+	if !setByUser("noisy-patterns") {
+		opts.NoisyPatterns = sel.NoisyPatterns
+	}
+	if !setByUser("max-file-size") && sel.MaxFileSize > 0 {
+		opts.MaxFileSize = sel.MaxFileSize
 	}
 	return nil
 }

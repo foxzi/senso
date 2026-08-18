@@ -45,6 +45,11 @@ type checkOptions struct {
 
 	JSON bool
 	Hash bool
+	// setFlags - имена флагов, заданных пользователем явно. Остальные
+	// правила отбора берутся из базы (см. applyStoredSelection), поэтому
+	// значение по умолчанию и явно указанное такое же значение должны
+	// различаться.
+	setFlags map[string]bool
 }
 
 // checkFlagSet создаёт FlagSet подкоманды check - единственное место, где
@@ -73,6 +78,9 @@ func parseCheckArgs(args []string) (checkOptions, error) {
 	if err := fs.Parse(args); err != nil {
 		return checkOptions{}, finishParse(fs, err)
 	}
+
+	opts.setFlags = make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { opts.setFlags[f.Name] = true })
 
 	rest := fs.Args()
 	switch len(rest) {
@@ -189,6 +197,13 @@ func RunCheck(args []string) error {
 	defer s.Close()
 
 	if err := s.CheckSchema(); err != nil {
+		return err
+	}
+
+	// Правила отбора и нарезки берём из базы для всех флагов, которые
+	// пользователь не задал явно: проверять индекс нужно теми же
+	// правилами, которыми он построен.
+	if err := applyStoredParams(s, &opts); err != nil {
 		return err
 	}
 
