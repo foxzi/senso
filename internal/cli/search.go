@@ -172,7 +172,16 @@ func runSearch(opts searchOptions) error {
 		results = results[:opts.K]
 	}
 
-	switch opts.outputFormat() {
+	// json-v2 несёт предупреждения о свежести внутри ответа, остальным
+	// форматам они печатаются в stderr.
+	format := opts.outputFormat()
+	if format != formatJSONV2 {
+		if err := warnStaleResults(s, results); err != nil {
+			return err
+		}
+	}
+
+	switch format {
 	case formatJSONV2:
 		return printSearchJSONV2(s, results, opts, filter)
 	case formatJSON:
@@ -425,6 +434,51 @@ func formatChunkRef(path string, seq, startLine, endLine int) string {
 // с тремя знаками после запятой (больше - релевантнее).
 func formatResultHeader(path string, seq, startLine, endLine int, score float64) string {
 	return fmt.Sprintf("%s  %.3f", formatChunkRef(path, seq, startLine, endLine), score)
+}
+
+// staleResultFile - файл из выдачи, разошедшийся с диском.
+type staleResultFile struct {
+	path   string
+	reason string
+}
+
+// staleResultPaths проверяет свежесть файлов выдачи: по одной проверке на
+// уникальный путь, в порядке первого появления пути в results. Проверяются
+// только попавшие в выдачу файлы, а не весь индекс - поиск не должен
+// платить обходом дерева за диагностику.
+func staleResultPaths(s *store.Store, results []store.Result) ([]staleResultFile, error) {
+	var stale []staleResultFile
+	for _, path := range uniquePaths(results) {
+		outdated, reason, err := checkStale(path, s)
+		if err != nil {
+			return nil, err
+		}
+		if !outdated {
+			continue
+		}
+		stale = append(stale, staleResultFile{path: path, reason: reason})
+	}
+	return stale, nil
+}
+
+// warnStaleResults печатает в stderr по предупреждению на каждый файл
+// выдачи, изменившийся после индексации. Формат json-v2 сюда не попадает:
+// он несёт те же предупреждения в самом ответе, в поле warnings.
+//
+// Предупреждения идут в stderr, а не в stdout, чтобы не портить разбор
+// вывода: json остаётся валидным, а paths - списком путей. Код выхода не
+// меняется - решение о переиндексации принимает senso index, а найденный
+// текст остаётся полезным и в устаревшем виде.
+func warnStaleResults(s *store.Store, results []store.Result) error {
+	stale, err := staleResultPaths(s, results)
+	if err != nil {
+		return err
+	}
+	cwd, _ := os.Getwd()
+	for _, f := range stale {
+		fmt.Fprintln(os.Stderr, staleWarning(shortenPath(f.path, cwd), f.reason))
+	}
+	return nil
 }
 
 // printSearchText печатает результаты в человекочитаемом виде: путь

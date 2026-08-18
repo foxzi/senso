@@ -207,22 +207,19 @@ func buildSearchFiltersV2(opts searchOptions, filter *resultFilter) searchFilter
 // одному предупреждению на уникальный путь, в порядке первого появления
 // пути в выдаче.
 func staleWarningsV2(s *store.Store, results []store.Result) ([]searchWarningV2, error) {
+	stale, err := staleResultPaths(s, results)
+	if err != nil {
+		return nil, err
+	}
 	var warnings []searchWarningV2
-	for _, path := range uniquePaths(results) {
-		stale, reason, err := checkStale(path, s)
-		if err != nil {
-			return nil, err
-		}
-		if !stale {
-			continue
-		}
+	for _, f := range stale {
 		code := warnFileModified
-		if reason == "missing" {
+		if f.reason == "missing" {
 			code = warnFileMissing
 		}
 		warnings = append(warnings, searchWarningV2{
 			Code:    code,
-			Path:    path,
+			Path:    f.path,
 			Message: staleMessageV2(code),
 		})
 	}

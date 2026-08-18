@@ -572,6 +572,19 @@ Warning codes:
 A warning is reported once per file, even when several chunks of that file
 are in the results.
 
+The other formats report the same mismatches on stderr, one line per file:
+
+```
+warning: notes.md has changed since indexing; showing text saved in the index, run senso index to refresh
+```
+
+Warnings go to stderr, so stdout stays parseable: `--format json` remains
+valid JSON and `--format paths` remains a plain list of paths. The exit
+code does not change: the text found is still useful when stale, and it is
+not `search` that decides about reindexing. Only the files present in the
+results are checked — `search` does not walk the tree for diagnostics; the
+full picture comes from `senso check`.
+
 **Compatibility:** `--json` and `--paths-only` keep working unchanged and
 remain short aliases for `--format json` and `--format paths`; their output
 stays the same. New fields may be added to `json-v2` without changing the
@@ -929,8 +942,8 @@ One rule, the same for every command:
 - **stdout** — the result of the command only: search results, `status`
   JSON, `check --json`, `index --report-json`, chunk text from `show`;
 - **stderr** — everything auxiliary: indexing progress, warnings (for
-  example about a stale file in `show`), human-readable summaries and error
-  messages.
+  example about a stale file in `show` and `search`), human-readable
+  summaries and error messages.
 
 That is why `senso search --format json-v2 ... > result.json` always
 produces a file that parses as JSON, while diagnostics can be inspected
