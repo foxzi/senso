@@ -774,6 +774,7 @@ senso show ./README.md#2
 | `--overlap <n>` | `150` | перекрытие чанков в рунах; если не задан явно, берётся из параметров, записанных в индексе |
 | `--chunker <name>` | `auto` | стратегия границ чанков (`auto` или `text`); если не задан явно, берётся из параметров, записанных в индексе |
 | `--json` | `false` | вывести результат в формате JSON |
+| `--list-limit <n>` | `100` | сколько путей включать в `files` в JSON; `0` — без ограничения |
 | `--quiet` | `false` | не печатать человекочитаемую сводку |
 
 Остальные флаги отбора файлов те же, что у `index` (`--ext`, `--exclude`,
@@ -830,6 +831,8 @@ $ senso check
 | `unindexed` | число | файлов на диске ещё не проиндексировано |
 | `excluded` | число | файлов из индекса больше не проходят фильтры |
 | `excluded_by_reason` | объект | причина исключения → число файлов; коды те же, что у `index --report-json` |
+| `files` | массив | объекты `{path, status, reason}`; всегда присутствует, пустой — как `[]` |
+| `files_truncated` | bool | список `files` обрезан лимитом `--list-limit`; поле есть только при обрезке |
 | `issues` | массив | объекты `{code, message}`; всегда присутствует, пустой — как `[]` |
 | `failed` | массив | объекты `{path, code, message}` для файлов, состояние которых проверить не удалось |
 | `indexed_at` | строка | время последней индексации |
@@ -837,6 +840,17 @@ $ senso check
 | `chunker` | строка | стратегия нарезки, которой построен индекс (пусто, если база создана версией senso без записи этого параметра) |
 | `vectors` | bool | в индексе есть векторы |
 | `database` | строка | путь к файлу базы данных (пусто, если база не найдена) |
+
+`files` избавляет агента от необходимости обходить дерево самому,
+чтобы узнать, какие именно файлы разошлись: список отсортирован
+сначала по статусу (`changed`, `missing`, `excluded`, `unindexed`),
+внутри статуса — по пути. `--list-limit` (по умолчанию `100`, `0` —
+без ограничения) обрезает этот список, сохраняя первыми файлы, которые
+лечит переиндексация (`changed`, `missing`), затем `excluded`, и лишь
+потом самую многочисленную группу `unindexed`. При обрезке появляется
+`files_truncated: true`, а счётчики `changed`, `missing`, `unindexed`
+и `excluded` остаются полными и показывают исходный масштаб
+расхождений.
 
 Коды в `issues`: `no_index` (база индекса не найдена — все найденные
 файлы попадают в `unindexed`), `model_mismatch` (индекс построен другой
@@ -857,7 +871,7 @@ $ senso check
 
 ```sh
 $ senso check --json --quiet
-{"fresh":false,"mode":"mtime","scanned":3,"unchanged":2,"changed":1,"missing":0,"unindexed":0,"excluded":0,"issues":[],"failed":[],"indexed_at":"2026-08-17T21:21:44+03:00","model":"","chunker":"auto","vectors":false,"database":"/tmp/w/.senso/index.db"}
+{"fresh":false,"mode":"mtime","scanned":3,"unchanged":1,"changed":1,"missing":0,"unindexed":1,"excluded":0,"files":[{"path":"/tmp/docdemo/a.txt","status":"changed"},{"path":"/tmp/docdemo/c.txt","status":"unindexed"}],"issues":[],"failed":[],"indexed_at":"2026-08-18T20:27:55+03:00","model":"","chunker":"auto","vectors":false,"database":"/tmp/docdemo/.senso/index.db"}
 ```
 
 ### `senso rm <путь>`

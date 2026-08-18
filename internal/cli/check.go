@@ -45,6 +45,9 @@ type checkOptions struct {
 
 	JSON bool
 	Hash bool
+	// ListLimit - сколько путей попадёт в поле files отчёта; 0 снимает
+	// ограничение.
+	ListLimit int
 	// setFlags - имена флагов, заданных пользователем явно. Остальные
 	// правила отбора берутся из базы (см. applyStoredSelection), поэтому
 	// значение по умолчанию и явно указанное такое же значение должны
@@ -63,6 +66,7 @@ func checkFlagSet(opts *checkOptions) *flag.FlagSet {
 	fs.StringVar(&opts.Model, "model", "bge-m3", i18n.T("embedding model the index is expected to be built with (only applies with --embed)", "модель эмбеддингов, которой должен быть построен индекс (действует только с --embed)"))
 	fs.BoolVar(&opts.Hash, "hash", false, i18n.T("compare file contents by hash instead of mtime and size (slower, but does not report rewritten-in-place files as changed)", "сравнивать содержимое файлов по хэшу, а не по mtime и размеру (медленнее, зато файлы с тем же содержимым не считаются изменёнными)"))
 	fs.BoolVar(&opts.JSON, "json", false, i18n.T("print the result as JSON", "вывести результат в формате JSON"))
+	fs.IntVar(&opts.ListLimit, "list-limit", defaultFileListLimit, i18n.T("how many diverging file paths to list in JSON (0 - all of them)", "сколько путей разошедшихся файлов перечислять в JSON (0 - все)"))
 	return fs
 }
 
@@ -92,12 +96,46 @@ func parseCheckArgs(args []string) (checkOptions, error) {
 		return checkOptions{}, usagef(i18n.T("check: expected at most one positional argument (path), got %d", "check: ожидается не более одного позиционного аргумента (путь), получено %d"), len(rest))
 	}
 
+	if opts.ListLimit < 0 {
+		return checkOptions{}, usagef("%s", i18n.T("--list-limit cannot be negative", "--list-limit не может быть отрицательным"))
+	}
+
 	if opts.MaxFileSize <= 0 {
 		return checkOptions{}, usagef("%s", i18n.T("--max-file-size must be greater than 0", "--max-file-size должен быть больше 0"))
 	}
 
 	return opts, nil
 }
+
+// Статусы файлов в машиночитаемом списке check. Счётчики отчёта отвечают
+// на вопрос "пора ли переиндексировать", а список - на вопрос "что именно
+// разошлось": без него агенту пришлось бы обходить дерево самому.
+const (
+	// statusChanged - файл есть в индексе, но на диске он изменился.
+	statusChanged = "changed"
+	// statusMissing - файл есть в индексе, но исчез с диска.
+	statusMissing = "missing"
+	// statusUnindexed - файл есть на диске, но его нет в индексе.
+	statusUnindexed = "unindexed"
+	// statusExcluded - файл есть и в индексе, и на диске, но текущие
+	// правила отбора его больше не пропускают.
+	statusExcluded = "excluded"
+)
+
+// checkFile - один разошедшийся файл в машиночитаемом списке.
+type checkFile struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	// Reason заполняется только для статуса excluded - это код причины
+	// исключения (см. walk.Reason*).
+	Reason string `json:"reason,omitempty"`
+}
+
+// defaultFileListLimit ограничивает список файлов в JSON. Полный список на
+// большом дереве (например, при отсутствующей базе, когда непроиндексирован
+// каждый файл) весит больше, чем читающий его агент готов принять, поэтому
+// по умолчанию список обрезается, а факт обрезки виден в files_truncated.
+const defaultFileListLimit = 100
 
 // checkIssue - расхождение параметров индексации с кодом причины.
 type checkIssue struct {
@@ -128,6 +166,11 @@ type checkReport struct {
 	// (см. walk.Reason*).
 	Excluded         int            `json:"excluded"`
 	ExcludedByReason map[string]int `json:"excluded_by_reason,omitempty"`
+	// Files - сами разошедшиеся файлы (см. checkFile). Список отсортирован
+	// по статусу и пути и обрезан лимитом --list-limit; счётчики выше
+	// всегда полные, поэтому по ним видно, что список неполон.
+	Files          []checkFile `json:"files"`
+	FilesTruncated bool        `json:"files_truncated,omitempty"`
 	// Issues - расхождения параметров индексации.
 	Issues []checkIssue `json:"issues"`
 	// Failed - файлы, состояние которых не удалось проверить (актуально
@@ -146,7 +189,7 @@ type checkReport struct {
 // newCheckReport создаёт отчёт с непустыми слайсами, чтобы в JSON они
 // выглядели как [], а не null.
 func newCheckReport() *checkReport {
-	return &checkReport{Issues: []checkIssue{}, Failed: []reportFailure{}}
+	return &checkReport{Issues: []checkIssue{}, Failed: []reportFailure{}, Files: []checkFile{}}
 }
 
 // addIssue добавляет расхождение параметров индексации.
@@ -228,20 +271,33 @@ func missingIndexReport(rep *checkReport, root string, opts checkOptions) *check
 	}, nil)
 	if err == nil {
 		rep.Scanned = len(candidates)
-		rep.Unindexed = len(candidates)
+		for _, path := range candidates {
+			rep.addFile(path, statusUnindexed, "")
+		}
 	}
 	rep.Fresh = false
 	return rep
 }
 
-// addExclude учитывает проиндексированный файл, который перестал проходить
-// правила отбора, вместе с причиной.
-func (r *checkReport) addExclude(reason string) {
-	r.Excluded++
-	if r.ExcludedByReason == nil {
-		r.ExcludedByReason = make(map[string]int)
+// addFile учитывает разошедшийся файл: увеличивает счётчик его статуса и
+// запоминает путь. Счётчик и список ведутся вместе, чтобы они не могли
+// разойтись между собой.
+func (r *checkReport) addFile(path, status, reason string) {
+	switch status {
+	case statusChanged:
+		r.Changed++
+	case statusMissing:
+		r.Missing++
+	case statusUnindexed:
+		r.Unindexed++
+	case statusExcluded:
+		r.Excluded++
+		if r.ExcludedByReason == nil {
+			r.ExcludedByReason = make(map[string]int)
+		}
+		r.ExcludedByReason[reason]++
 	}
-	r.ExcludedByReason[reason]++
+	r.Files = append(r.Files, checkFile{Path: path, Status: status, Reason: reason})
 }
 
 // addFailure учитывает файл, состояние которого не удалось проверить.
@@ -324,7 +380,7 @@ func compareTree(root string, opts checkOptions, s *store.Store, rep *checkRepor
 
 		state, found := indexed[path]
 		if !found {
-			rep.Unindexed++
+			rep.addFile(path, statusUnindexed, "")
 			continue
 		}
 
@@ -334,7 +390,7 @@ func compareTree(root string, opts checkOptions, s *store.Store, rep *checkRepor
 			continue
 		}
 		if changed {
-			rep.Changed++
+			rep.addFile(path, statusChanged, "")
 		} else {
 			rep.Unchanged++
 		}
@@ -348,9 +404,9 @@ func compareTree(root string, opts checkOptions, s *store.Store, rep *checkRepor
 			continue
 		}
 		if _, err := os.Stat(path); err != nil {
-			rep.Missing++
+			rep.addFile(path, statusMissing, "")
 		} else {
-			rep.addExclude(excludeReason(path, reasons))
+			rep.addFile(path, statusExcluded, excludeReason(path, reasons))
 		}
 	}
 
@@ -417,10 +473,44 @@ func sortFailures(failures []reportFailure) {
 	sort.Slice(failures, func(i, j int) bool { return failures[i].Path < failures[j].Path })
 }
 
+// statusOrder задаёт порядок статусов в списке файлов. Он же определяет,
+// что уцелеет при обрезке: сначала файлы, которые переиндексация обновит
+// (changed, missing), затем требующие решения человека (excluded), и лишь
+// потом самая многочисленная группа - unindexed.
+var statusOrder = map[string]int{
+	statusChanged:   0,
+	statusMissing:   1,
+	statusExcluded:  2,
+	statusUnindexed: 3,
+}
+
+// sortFiles упорядочивает список файлов по статусу, затем по пути, чтобы
+// вывод не зависел от порядка обхода каталогов.
+func sortFiles(files []checkFile) {
+	sort.Slice(files, func(i, j int) bool {
+		if statusOrder[files[i].Status] != statusOrder[files[j].Status] {
+			return statusOrder[files[i].Status] < statusOrder[files[j].Status]
+		}
+		return files[i].Path < files[j].Path
+	})
+}
+
+// limitFiles обрезает список до limit записей. Счётчики отчёта остаются
+// полными, поэтому по ним всегда видно исходный масштаб расхождений.
+func limitFiles(rep *checkReport, limit int) {
+	sortFiles(rep.Files)
+	if limit <= 0 || len(rep.Files) <= limit {
+		return
+	}
+	rep.Files = rep.Files[:limit]
+	rep.FilesTruncated = true
+}
+
 // finishCheck печатает отчёт и возвращает код завершения: устаревший
 // индекс - это exitStale, а не ошибка.
 func finishCheck(opts checkOptions, rep *checkReport) error {
 	if opts.JSON {
+		limitFiles(rep, opts.ListLimit)
 		if err := json.NewEncoder(os.Stdout).Encode(rep); err != nil {
 			return err
 		}

@@ -777,6 +777,7 @@ Flags:
 | `--overlap <n>` | `150` | chunk overlap in runes; if not given explicitly, taken from the parameters recorded in the index |
 | `--chunker <name>` | `auto` | chunk boundary strategy (`auto` or `text`); if not given explicitly, taken from the parameters recorded in the index |
 | `--json` | `false` | print the result as JSON |
+| `--list-limit <n>` | `100` | how many paths to include in `files` in the JSON output; `0` means no limit |
 | `--quiet` | `false` | do not print the human-readable summary |
 
 The remaining file selection flags are the same as for `index` (`--ext`,
@@ -832,6 +833,8 @@ database: .senso/index.db
 | `unindexed` | number | files on disk that are not indexed yet |
 | `excluded` | number | indexed files that no longer pass the filters |
 | `excluded_by_reason` | object | exclusion reason -> number of files; the same codes as in `index --report-json` |
+| `files` | array | objects `{path, status, reason}`; always present, empty as `[]` |
+| `files_truncated` | bool | the `files` list was cut short by `--list-limit`; present only when truncated |
 | `issues` | array | objects `{code, message}`; always present, empty as `[]` |
 | `failed` | array | objects `{path, code, message}` for files whose state could not be checked |
 | `indexed_at` | string | time of the last indexing run |
@@ -839,6 +842,16 @@ database: .senso/index.db
 | `chunker` | string | chunking strategy the index was built with (empty if the database was built by a senso version that did not record this parameter) |
 | `vectors` | bool | the index contains vectors |
 | `database` | string | path to the database file (empty when no database was found) |
+
+`files` saves the agent from walking the tree itself to find out which
+files actually diverged: the list is sorted by status first
+(`changed`, `missing`, `excluded`, `unindexed`), then by path within a
+status. `--list-limit` (default `100`, `0` means no limit) trims this
+list, keeping the files that reindexing fixes first (`changed`,
+`missing`), then `excluded`, and only then the usually largest
+`unindexed` group. When the list is cut short, `files_truncated: true`
+appears, while the `changed`, `missing`, `unindexed` and `excluded`
+counters stay complete and show the true scale of the divergence.
 
 Codes in `issues`: `no_index` (no index database found — every discovered
 file counts as `unindexed`), `model_mismatch` (the index was built with a
@@ -859,7 +872,7 @@ nothing is simply known about such a file.
 
 ```sh
 $ senso check --json --quiet
-{"fresh":false,"mode":"mtime","scanned":3,"unchanged":2,"changed":1,"missing":0,"unindexed":0,"excluded":0,"issues":[],"failed":[],"indexed_at":"2026-08-17T21:21:44+03:00","model":"","chunker":"auto","vectors":false,"database":"/tmp/w/.senso/index.db"}
+{"fresh":false,"mode":"mtime","scanned":3,"unchanged":1,"changed":1,"missing":0,"unindexed":1,"excluded":0,"files":[{"path":"/tmp/docdemo/a.txt","status":"changed"},{"path":"/tmp/docdemo/c.txt","status":"unindexed"}],"issues":[],"failed":[],"indexed_at":"2026-08-18T20:27:55+03:00","model":"","chunker":"auto","vectors":false,"database":"/tmp/docdemo/.senso/index.db"}
 ```
 
 ### `senso rm <path>`
