@@ -174,13 +174,7 @@ func printIndexSummary(w io.Writer, r *indexReport, cwd string) {
 
 	if len(r.Failed) > 0 {
 		fmt.Fprintf(w, i18n.T("failed: %d\n", "не удалось обработать: %d\n"), len(r.Failed))
-		for i, f := range r.Failed {
-			if i == maxFailuresShown {
-				fmt.Fprintf(w, i18n.T("  ... and %d more\n", "  ... и ещё %d\n"), len(r.Failed)-maxFailuresShown)
-				break
-			}
-			fmt.Fprintf(w, "  %s: %s: %s\n", shortenPath(f.Path, cwd), f.Code, f.Message)
-		}
+		printFailureList(w, r.Failed, cwd)
 	}
 
 	fmt.Fprintf(w, i18n.T("database: %s\n", "база: %s\n"), shortenPath(r.Database, cwd))
@@ -193,6 +187,18 @@ func printIndexSummary(w io.Writer, r *indexReport, cwd string) {
 // maxFailuresShown ограничивает список ошибок в человекочитаемой сводке -
 // полный список всегда доступен в машинном отчёте.
 const maxFailuresShown = 10
+
+// printFailureList печатает пофайловый список ошибок, обрезая его до
+// maxFailuresShown строк. Используется сводками index и check.
+func printFailureList(w io.Writer, failures []reportFailure, cwd string) {
+	for i, f := range failures {
+		if i == maxFailuresShown {
+			fmt.Fprintf(w, i18n.T("  ... and %d more\n", "  ... и ещё %d\n"), len(failures)-maxFailuresShown)
+			break
+		}
+		fmt.Fprintf(w, "  %s: %s: %s\n", shortenPath(f.Path, cwd), f.Code, f.Message)
+	}
+}
 
 // printIndexReportJSON выводит машинный отчёт одной строкой JSON.
 func printIndexReportJSON(w io.Writer, r *indexReport) error {

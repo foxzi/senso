@@ -548,13 +548,7 @@ func printCheckSummary(w io.Writer, rep *checkReport, cwd string) {
 
 	if len(rep.Failed) > 0 {
 		fmt.Fprintf(w, i18n.T("could not be checked: %d\n", "не удалось проверить: %d\n"), len(rep.Failed))
-		for i, f := range rep.Failed {
-			if i == maxFailuresShown {
-				fmt.Fprintf(w, i18n.T("  ... and %d more\n", "  ... и ещё %d\n"), len(rep.Failed)-maxFailuresShown)
-				break
-			}
-			fmt.Fprintf(w, "  %s: %s: %s\n", shortenPath(f.Path, cwd), f.Code, f.Message)
-		}
+		printFailureList(w, rep.Failed, cwd)
 	}
 
 	if rep.IndexedAt != "" {
