@@ -475,42 +475,12 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	// chunk_id, прежде чем удалить сами чанки. Таблица может ещё не
 	// существовать (лексический индекс без эмбеддингов), тогда удаление
 	// пропускаем.
-	rows, err := tx.Query(`SELECT id FROM chunks WHERE file_id=?`, fileID)
+	oldChunkIDs, err := chunkIDsTx(tx, fileID)
 	if err != nil {
 		return fmt.Errorf(i18n.T("store: select old chunk_id: %w", "store: выборка старых chunk_id: %w"), err)
 	}
-	var oldChunkIDs []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		oldChunkIDs = append(oldChunkIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
+	if err := deleteChunkIndexes(tx, oldChunkIDs); err != nil {
 		return err
-	}
-	rows.Close()
-
-	if len(oldChunkIDs) > 0 {
-		var n int
-		if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil {
-			return fmt.Errorf(i18n.T("store: check vec_chunks: %w", "store: проверка vec_chunks: %w"), err)
-		}
-		if n > 0 {
-			for _, id := range oldChunkIDs {
-				if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE chunk_id=?`, id); err != nil {
-					return fmt.Errorf(i18n.T("store: delete vector chunk_id=%d: %w", "store: удаление вектора chunk_id=%d: %w"), id, err)
-				}
-			}
-		}
-		for _, id := range oldChunkIDs {
-			if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE chunk_id=?`, id); err != nil {
-				return fmt.Errorf(i18n.T("store: delete from fts_chunks chunk_id=%d: %w", "store: удаление из fts_chunks chunk_id=%d: %w"), id, err)
-			}
-		}
 	}
 	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
 		return fmt.Errorf(i18n.T("store: delete old chunks: %w", "store: удаление старых chunks: %w"), err)
@@ -522,9 +492,27 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		}
 	}
 
+	insChunk, err := tx.Prepare(`INSERT INTO chunks(file_id, seq, text, line_start, line_end) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insChunk.Close()
+	insFTS, err := tx.Prepare(`INSERT INTO fts_chunks(body, path, ids, chunk_id) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insFTS.Close()
+	var insVec *sql.Stmt
+	if len(vectors) > 0 {
+		insVec, err = tx.Prepare(`INSERT INTO vec_chunks(chunk_id, embedding) VALUES (?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer insVec.Close()
+	}
+
 	for i, c := range chunks {
-		res, err := tx.Exec(`INSERT INTO chunks(file_id, seq, text, line_start, line_end) VALUES (?, ?, ?, ?, ?)`,
-			fileID, i, c.Text, c.StartLine, c.EndLine)
+		res, err := insChunk.Exec(fileID, i, c.Text, c.StartLine, c.EndLine)
 		if err != nil {
 			return fmt.Errorf(i18n.T("store: insert chunk seq=%d: %w", "store: вставка chunk seq=%d: %w"), i, err)
 		}
@@ -532,20 +520,17 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO fts_chunks(body, path, ids, chunk_id) VALUES (?, ?, ?, ?)`,
-			stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text), chunkID,
-		); err != nil {
+		if _, err := insFTS.Exec(stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text), chunkID); err != nil {
 			return fmt.Errorf(i18n.T("store: insert into fts_chunks seq=%d: %w", "store: вставка в fts_chunks seq=%d: %w"), i, err)
 		}
-		if len(vectors) == 0 {
+		if insVec == nil {
 			continue
 		}
 		blob, err := vecext.SerializeFloat32(vectors[i])
 		if err != nil {
 			return fmt.Errorf(i18n.T("store: serialize vector seq=%d: %w", "store: сериализация вектора seq=%d: %w"), i, err)
 		}
-		if _, err := tx.Exec(`INSERT INTO vec_chunks(chunk_id, embedding) VALUES (?, ?)`, chunkID, blob); err != nil {
+		if _, err := insVec.Exec(chunkID, blob); err != nil {
 			return fmt.Errorf(i18n.T("store: insert vector seq=%d: %w", "store: вставка вектора seq=%d: %w"), i, err)
 		}
 	}
@@ -905,42 +890,12 @@ func deleteFileTx(tx *sql.Tx, path string) (int, error) {
 		return 0, err
 	}
 
-	rows, err := tx.Query(`SELECT id FROM chunks WHERE file_id=?`, fileID)
+	chunkIDs, err := chunkIDsTx(tx, fileID)
 	if err != nil {
 		return 0, err
 	}
-	var chunkIDs []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		chunkIDs = append(chunkIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
+	if err := deleteChunkIndexes(tx, chunkIDs); err != nil {
 		return 0, err
-	}
-	rows.Close()
-
-	if len(chunkIDs) > 0 {
-		var n int
-		if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil {
-			return 0, err
-		}
-		if n > 0 {
-			for _, id := range chunkIDs {
-				if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE chunk_id=?`, id); err != nil {
-					return 0, err
-				}
-			}
-		}
-		for _, id := range chunkIDs {
-			if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE chunk_id=?`, id); err != nil {
-				return 0, err
-			}
-		}
 	}
 	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
 		return 0, err
@@ -950,6 +905,60 @@ func deleteFileTx(tx *sql.Tx, path string) (int, error) {
 	}
 
 	return 1, nil
+}
+
+// chunkIDsTx возвращает id всех чанков файла fileID в рамках транзакции tx.
+func chunkIDsTx(tx *sql.Tx, fileID int64) ([]int64, error) {
+	rows, err := tx.Query(`SELECT id FROM chunks WHERE file_id=?`, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// deleteChunkIndexes удаляет из fts_chunks и vec_chunks (если таблица
+// векторов существует) записи перечисленных chunk_id. Удалений столько же,
+// сколько чанков у файла, поэтому выражения подготавливаются один раз.
+func deleteChunkIndexes(tx *sql.Tx, chunkIDs []int64) error {
+	if len(chunkIDs) == 0 {
+		return nil
+	}
+	var n int
+	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil {
+		return fmt.Errorf(i18n.T("store: check vec_chunks: %w", "store: проверка vec_chunks: %w"), err)
+	}
+	if n > 0 {
+		delVec, err := tx.Prepare(`DELETE FROM vec_chunks WHERE chunk_id=?`)
+		if err != nil {
+			return err
+		}
+		defer delVec.Close()
+		for _, id := range chunkIDs {
+			if _, err := delVec.Exec(id); err != nil {
+				return fmt.Errorf(i18n.T("store: delete vector chunk_id=%d: %w", "store: удаление вектора chunk_id=%d: %w"), id, err)
+			}
+		}
+	}
+	delFTS, err := tx.Prepare(`DELETE FROM fts_chunks WHERE chunk_id=?`)
+	if err != nil {
+		return err
+	}
+	defer delFTS.Close()
+	for _, id := range chunkIDs {
+		if _, err := delFTS.Exec(id); err != nil {
+			return fmt.Errorf(i18n.T("store: delete from fts_chunks chunk_id=%d: %w", "store: удаление из fts_chunks chunk_id=%d: %w"), id, err)
+		}
+	}
+	return nil
 }
 
 // Stats - агрегированная статистика по индексу.
