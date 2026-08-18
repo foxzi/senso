@@ -69,9 +69,3 @@ func TestDefaultLangIsEnglish(t *testing.T) {
 		t.Fatalf("EN должен быть нулевым значением Lang, получено %d", EN)
 	}
 }
-
-func TestLangString(t *testing.T) {
-	if EN.String() != "en" || RU.String() != "ru" {
-		t.Errorf("String() = %q/%q, ожидалось en/ru", EN.String(), RU.String())
-	}
-}

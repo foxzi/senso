@@ -20,14 +20,9 @@ import (
 )
 
 // Auto регистрирует расширение sqlite-vec для всех новых соединений SQLite3
-// в процессе. Действует, пока не будет вызван Cancel.
+// в процессе.
 func Auto() {
 	C.sqlite3_auto_extension((*[0]byte)(C.sqlite3_vec_init))
-}
-
-// Cancel отменяет действие предыдущего вызова Auto.
-func Cancel() {
-	C.sqlite3_cancel_auto_extension((*[0]byte)(C.sqlite3_vec_init))
 }
 
 // SerializeFloat32 сериализует вектор float32 в BLOB, понятный sqlite-vec.

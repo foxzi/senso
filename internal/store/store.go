@@ -193,7 +193,7 @@ func (s *Store) tableExists(name string) (bool, error) {
 }
 
 // createSchema создаёт таблицы схемы (без vec_chunks - её размерность
-// известна только после первого эмбеддинга, см. EnsureVectors) и
+// известна только после первого эмбеддинга, см. ensureVectorsExec) и
 // записывает начальные значения meta.
 func (s *Store) createSchema(model string, dim int, root string) error {
 	tx, err := s.db.Begin()
@@ -400,20 +400,6 @@ func ensureVectorsExec(e execer, dim int) error {
 		return fmt.Errorf(i18n.T("store: create vec_chunks: %w", "store: создание vec_chunks: %w"), err)
 	}
 	return nil
-}
-
-// EnsureVectors идемпотентно создаёт таблицу vec_chunks с размерностью dim,
-// если она ещё не существует. Нужна для отложенного создания векторного
-// индекса - при первой индексации с эмбеддингами.
-func (s *Store) EnsureVectors(dim int) error {
-	exists, err := s.tableExists("vec_chunks")
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	return ensureVectorsExec(s.db, dim)
 }
 
 // HasVectors сообщает, создана ли уже таблица векторов vec_chunks.

@@ -314,11 +314,11 @@ func TestSetMetaGetMeta(t *testing.T) {
 func TestEnsureVectorsIdempotent(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.EnsureVectors(8); err != nil {
+	if err := ensureVectorsExec(s.db, 8); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.EnsureVectors(8); err != nil {
-		t.Fatalf("повторный EnsureVectors вернул ошибку: %v", err)
+	if err := ensureVectorsExec(s.db, 8); err != nil {
+		t.Fatalf("повторный ensureVectorsExec вернул ошибку: %v", err)
 	}
 
 	has, err := s.HasVectors()
@@ -326,7 +326,7 @@ func TestEnsureVectorsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !has {
-		t.Error("HasVectors() = false после EnsureVectors, ожидалось true")
+		t.Error("HasVectors() = false после ensureVectorsExec, ожидалось true")
 	}
 }
 

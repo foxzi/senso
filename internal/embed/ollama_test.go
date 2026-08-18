@@ -35,9 +35,6 @@ func TestEmbedSuccess(t *testing.T) {
 	if len(vecs) != 2 {
 		t.Fatalf("получено %d векторов, ожидалось 2", len(vecs))
 	}
-	if c.Model() != "bge-m3" {
-		t.Errorf("Model() = %q, ожидалось %q", c.Model(), "bge-m3")
-	}
 }
 
 func TestEmbedEmptyInput(t *testing.T) {

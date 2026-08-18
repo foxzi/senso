@@ -40,11 +40,6 @@ func New(baseURL, model string) *Client {
 	}
 }
 
-// Model возвращает имя модели, используемой клиентом.
-func (c *Client) Model() string {
-	return c.model
-}
-
 // embedRequest - тело запроса к /api/embed.
 type embedRequest struct {
 	Model string   `json:"model"`
