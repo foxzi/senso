@@ -974,3 +974,50 @@ func TestOpenReadOnlyMissingFile(t *testing.T) {
 		t.Fatal("OpenReadOnly must fail when the database file does not exist")
 	}
 }
+
+func TestSubtreeLikeMetacharsAreLiteral(t *testing.T) {
+	s := mustOpenInit(t, "bge-m3", testDim)
+
+	// a_b и a%b содержат метасимволы LIKE; axb и aXb совпали бы с ними,
+	// если бы шаблон поддерева не экранировался.
+	paths := []string{"/r/a_b/f.txt", "/r/axb/f.txt", "/r/a%b/f.txt", "/r/aXb/f.txt"}
+	for _, p := range paths {
+		if err := s.ReplaceFile(p, 1, 1, "h", chunksOf("text"), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.ListPaths("/r/a_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "/r/a_b/f.txt" {
+		t.Fatalf("ListPaths(/r/a_b) = %v, ожидалось [/r/a_b/f.txt]", got)
+	}
+
+	states, err := s.FileStates("/r/a%b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("FileStates(/r/a%%b) вернул %d файлов, ожидался 1: %v", len(states), states)
+	}
+	if _, ok := states["/r/a%b/f.txt"]; !ok {
+		t.Fatalf("FileStates(/r/a%%b) не содержит /r/a%%b/f.txt: %v", states)
+	}
+
+	n, err := s.DeleteSubtree("/r/a_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("DeleteSubtree(/r/a_b) удалил %d файлов, ожидался 1", n)
+	}
+	rest, err := s.ListPaths("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 3 {
+		t.Fatalf("после DeleteSubtree осталось %d файлов, ожидалось 3: %v", len(rest), rest)
+	}
+}

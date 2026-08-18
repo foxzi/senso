@@ -763,7 +763,19 @@ func (s *Store) ChunkSeqRange(path string) (min, max int, found bool, err error)
 
 // subtreeCondition - условие ограничения путём или поддеревом,
 // используется одинаково во всех методах, работающих с деревом путей.
-const subtreeCondition = `path = ? OR path LIKE ? || '/%'`
+// Вторым аргументом запроса обязан идти subtreePattern(prefix): шаблон LIKE
+// собирается в Go, чтобы экранировать метасимволы % и _, которые легальны
+// в именах файлов, но иначе трактовались бы LIKE как подстановочные знаки.
+const subtreeCondition = `path = ? OR path LIKE ? ESCAPE '\'`
+
+// likeEscaper экранирует метасимволы LIKE (% и _) и сам символ
+// экранирования, чтобы они сопоставлялись буквально.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// subtreePattern строит шаблон LIKE «всё внутри поддерева prefix».
+func subtreePattern(prefix string) string {
+	return likeEscaper.Replace(prefix) + "/%"
+}
 
 // ListPaths возвращает пути всех проиндексированных файлов, чей путь равен
 // prefix или лежит внутри поддерева prefix. Пустой prefix возвращает все пути.
@@ -773,7 +785,7 @@ func (s *Store) ListPaths(prefix string) ([]string, error) {
 	if prefix == "" {
 		rows, err = s.db.Query(`SELECT path FROM files ORDER BY path`)
 	} else {
-		rows, err = s.db.Query(`SELECT path FROM files WHERE `+subtreeCondition+` ORDER BY path`, prefix, prefix)
+		rows, err = s.db.Query(`SELECT path FROM files WHERE `+subtreeCondition+` ORDER BY path`, prefix, subtreePattern(prefix))
 	}
 	if err != nil {
 		return nil, err
@@ -808,7 +820,7 @@ func (s *Store) FileStates(prefix string) (map[string]FileMeta, error) {
 	if prefix == "" {
 		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files`)
 	} else {
-		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files WHERE `+subtreeCondition, prefix, prefix)
+		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files WHERE `+subtreeCondition, prefix, subtreePattern(prefix))
 	}
 	if err != nil {
 		return nil, err
@@ -862,7 +874,7 @@ func (s *Store) DeleteSubtree(prefix string) (int, error) {
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.Query(`SELECT path FROM files WHERE `+subtreeCondition, prefix, prefix)
+	rows, err := tx.Query(`SELECT path FROM files WHERE `+subtreeCondition, prefix, subtreePattern(prefix))
 	if err != nil {
 		return 0, err
 	}
