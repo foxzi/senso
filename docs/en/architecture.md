@@ -85,7 +85,7 @@
 - **`internal/vecext`** — wires the sqlite-vec extension into the cgo
   driver `mattn/go-sqlite3` within a single process/connection.
 - **`internal/cli`** — implementation of the subcommands (`index`,
-  `search`, `status`, `rm`, `show`): flag parsing, incremental re-index
+  `search`, `status`, `check`, `rm`, `show`): flag parsing, incremental re-index
   decisions, filtering `search` results by
   `--path`/`--ext`/`--exclude`/`--root`, post-processing the result list
   (`--deduplicate`, `--max-per-file`), human-readable and JSON output

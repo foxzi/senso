@@ -776,6 +776,8 @@ Flags:
 | `--chunk-size <n>` | `1200` | chunk size in runes; if not given explicitly, taken from the parameters recorded in the index |
 | `--overlap <n>` | `150` | chunk overlap in runes; if not given explicitly, taken from the parameters recorded in the index |
 | `--chunker <name>` | `auto` | chunk boundary strategy (`auto` or `text`); if not given explicitly, taken from the parameters recorded in the index |
+| `--embed` | `false` | also check compatibility with semantic search: the index must contain vectors built by the expected model |
+| `--model <name>` | `bge-m3` | embedding model the index is expected to be built with (only applies with `--embed`) |
 | `--json` | `false` | print the result as JSON |
 | `--list-limit <n>` | `100` | how many paths to include in `files` in the JSON output; `0` means no limit |
 | `--quiet` | `false` | do not print the human-readable summary |
