@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -80,7 +81,7 @@ func errIndexNotFound() error {
 // базы при первом же обращении, поэтому без этой проверки читающая команда с
 // опечаткой в --db молча создавала бы пустую базу и падала бы потом на
 // отсутствующей таблице вместо понятного «индекс не найден».
-func openStore(flagDB string) (*store.Store, string, error) {
+func openStore(ctx context.Context, flagDB string) (*store.Store, string, error) {
 	path, err := dbpath.Find(flagDB)
 	if err != nil {
 		if errors.Is(err, dbpath.ErrNotFound) {
@@ -94,11 +95,11 @@ func openStore(flagDB string) (*store.Store, string, error) {
 		}
 		return nil, "", err
 	}
-	s, err := store.Open(path)
+	s, err := store.Open(ctx, path)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := s.CheckSchema(); err != nil {
+	if err := s.CheckSchema(ctx); err != nil {
 		s.Close()
 		return nil, "", err
 	}

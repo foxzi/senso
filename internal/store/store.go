@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -36,7 +37,7 @@ type Store struct {
 
 // Open открывает (или создаёт) файл базы данных по пути path и настраивает
 // прагмы соединения. Схему нужно инициализировать отдельно вызовом Init.
-func Open(path string) (*Store, error) {
+func Open(ctx context.Context, path string) (*Store, error) {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, err
@@ -52,7 +53,7 @@ func Open(path string) (*Store, error) {
 		"PRAGMA foreign_keys=ON",
 	}
 	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
+		if _, err := db.ExecContext(ctx, p); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("store: %s: %w", p, err)
 		}
@@ -65,7 +66,7 @@ func Open(path string) (*Store, error) {
 // отклонит любую попытку изменения, поэтому диагностические команды
 // физически не могут повредить индекс. Файл должен существовать - режим
 // mode=ro не создаёт базу.
-func OpenReadOnly(path string) (*Store, error) {
+func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
 	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
 	if err != nil {
 		return nil, err
@@ -74,7 +75,7 @@ func OpenReadOnly(path string) (*Store, error) {
 
 	// journal_mode и synchronous в режиме только чтения задать нельзя -
 	// это запись в саму базу; foreign_keys живёт в соединении и безопасен.
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("store: PRAGMA foreign_keys=ON: %w", err)
 	}
@@ -128,21 +129,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
 // чисто лексический индекс без векторов. Если схема уже существует и в ней
 // сохранена непустая модель, проверяет, что она совпадает с переданной - при
 // расхождении возвращает ошибку.
-func (s *Store) Init(model string, dim int, root string) error {
-	exists, err := s.tableExists("meta")
+func (s *Store) Init(ctx context.Context, model string, dim int, root string) error {
+	exists, err := s.tableExists(ctx, "meta")
 	if err != nil {
 		return err
 	}
 
 	if !exists {
-		return s.createSchema(model, dim, root)
+		return s.createSchema(ctx, model, dim, root)
 	}
 
-	if err := s.CheckSchema(); err != nil {
+	if err := s.CheckSchema(ctx); err != nil {
 		return err
 	}
 
-	curModel, curDim, err := s.Meta()
+	curModel, curDim, err := s.Meta(ctx)
 	if err != nil {
 		return err
 	}
@@ -159,8 +160,8 @@ func (s *Store) Init(model string, dim int, root string) error {
 // CheckSchema проверяет, что версия схемы существующей базы совместима с
 // текущей версией senso. Для ещё не инициализированной базы (таблицы meta
 // нет) проверять нечего - возвращает nil.
-func (s *Store) CheckSchema() error {
-	exists, err := s.tableExists("meta")
+func (s *Store) CheckSchema(ctx context.Context) error {
+	exists, err := s.tableExists(ctx, "meta")
 	if err != nil {
 		return err
 	}
@@ -168,7 +169,7 @@ func (s *Store) CheckSchema() error {
 		return nil
 	}
 
-	curVersion, err := s.GetMeta("schema_version")
+	curVersion, err := s.GetMeta(ctx, "schema_version")
 	if err != nil {
 		return err
 	}
@@ -183,9 +184,9 @@ func (s *Store) CheckSchema() error {
 }
 
 // tableExists проверяет наличие таблицы name в текущей базе данных.
-func (s *Store) tableExists(name string) (bool, error) {
+func (s *Store) tableExists(ctx context.Context, name string) (bool, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -195,14 +196,14 @@ func (s *Store) tableExists(name string) (bool, error) {
 // createSchema создаёт таблицы схемы (без vec_chunks - её размерность
 // известна только после первого эмбеддинга, см. ensureVectorsExec) и
 // записывает начальные значения meta.
-func (s *Store) createSchema(model string, dim int, root string) error {
-	tx, err := s.db.Begin()
+func (s *Store) createSchema(ctx context.Context, model string, dim int, root string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(schemaDDL); err != nil {
+	if _, err := tx.ExecContext(ctx, schemaDDL); err != nil {
 		return fmt.Errorf(i18n.T("store: create schema: %w", "store: создание схемы: %w"), err)
 	}
 
@@ -214,7 +215,7 @@ func (s *Store) createSchema(model string, dim int, root string) error {
 		"indexed_at":     "",
 	}
 	for k, v := range meta {
-		if _, err := tx.Exec(`INSERT INTO meta(key, value) VALUES (?, ?)`, k, v); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)`, k, v); err != nil {
 			return fmt.Errorf(i18n.T("store: write meta.%s: %w", "store: запись meta.%s: %w"), k, err)
 		}
 	}
@@ -223,12 +224,12 @@ func (s *Store) createSchema(model string, dim int, root string) error {
 }
 
 // Meta возвращает модель эмбеддингов и её размерность, записанные в базе.
-func (s *Store) Meta() (model string, dim int, err error) {
-	if err = s.db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model); err != nil {
+func (s *Store) Meta(ctx context.Context) (model string, dim int, err error) {
+	if err = s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='model'`).Scan(&model); err != nil {
 		return "", 0, fmt.Errorf(i18n.T("store: read meta.model: %w", "store: чтение meta.model: %w"), err)
 	}
 	var dimStr string
-	if err = s.db.QueryRow(`SELECT value FROM meta WHERE key='dim'`).Scan(&dimStr); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='dim'`).Scan(&dimStr); err != nil {
 		return "", 0, fmt.Errorf(i18n.T("store: read meta.dim: %w", "store: чтение meta.dim: %w"), err)
 	}
 	if dim, err = strconv.Atoi(dimStr); err != nil {
@@ -238,8 +239,8 @@ func (s *Store) Meta() (model string, dim int, err error) {
 }
 
 // SetMeta сохраняет произвольный ключ в таблицу meta (upsert).
-func (s *Store) SetMeta(key, value string) error {
-	if _, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES (?, ?)
+func (s *Store) SetMeta(ctx context.Context, key, value string) error {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
 		return fmt.Errorf(i18n.T("store: write meta.%s: %w", "store: запись meta.%s: %w"), key, err)
 	}
@@ -248,9 +249,9 @@ func (s *Store) SetMeta(key, value string) error {
 
 // GetMeta возвращает значение ключа из таблицы meta; отсутствие ключа - это
 // не ошибка, возвращается пустая строка.
-func (s *Store) GetMeta(key string) (string, error) {
+func (s *Store) GetMeta(ctx context.Context, key string) (string, error) {
 	var value string
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&value)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -270,8 +271,8 @@ const rootsMetaKey = "roots"
 // в этой базе через AddRoot. Для баз, созданных до появления meta.roots,
 // возвращается список из одного элемента - значения meta.root; если и его
 // нет, возвращается пустой список без ошибки.
-func (s *Store) Roots() ([]string, error) {
-	raw, err := s.GetMeta(rootsMetaKey)
+func (s *Store) Roots(ctx context.Context) ([]string, error) {
+	raw, err := s.GetMeta(ctx, rootsMetaKey)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +286,7 @@ func (s *Store) Roots() ([]string, error) {
 
 	// Старая база без meta.roots - единственный известный корень лежит в
 	// meta.root (его пишет Init при создании схемы).
-	root, err := s.GetMeta("root")
+	root, err := s.GetMeta(ctx, "root")
 	if err != nil {
 		return nil, err
 	}
@@ -301,10 +302,10 @@ func (s *Store) Roots() ([]string, error) {
 // root, наоборот, является предком уже записанных корней, эти вложенные
 // корни поглощаются им и убираются из списка - индексация родителя
 // покрывает и их. Повторный вызов с тем же root не создаёт дублей.
-func (s *Store) AddRoot(root string) error {
+func (s *Store) AddRoot(ctx context.Context, root string) error {
 	root = filepath.Clean(root)
 
-	roots, err := s.Roots()
+	roots, err := s.Roots(ctx)
 	if err != nil {
 		return err
 	}
@@ -329,7 +330,7 @@ func (s *Store) AddRoot(root string) error {
 	if err != nil {
 		return err
 	}
-	return s.SetMeta(rootsMetaKey, string(data))
+	return s.SetMeta(ctx, rootsMetaKey, string(data))
 }
 
 // RemoveRoot убирает из meta.roots все корни, которые равны prefix или
@@ -340,10 +341,10 @@ func (s *Store) AddRoot(root string) error {
 // Корень, внутри которого лежит prefix (то есть предок удаляемого пути),
 // не трогается: из него удалили лишь часть поддерева, сам он остаётся
 // проиндексированным.
-func (s *Store) RemoveRoot(prefix string) (bool, error) {
+func (s *Store) RemoveRoot(ctx context.Context, prefix string) (bool, error) {
 	prefix = filepath.Clean(prefix)
 
-	roots, err := s.Roots()
+	roots, err := s.Roots(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -363,7 +364,7 @@ func (s *Store) RemoveRoot(prefix string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, s.SetMeta(rootsMetaKey, string(data))
+	return true, s.SetMeta(ctx, rootsMetaKey, string(data))
 }
 
 // pathInSubtree сообщает, лежит ли path внутри поддерева root (или равен
@@ -383,7 +384,7 @@ func pathInSubtree(path, root string) bool {
 // *sql.DB, и *sql.Tx. Позволяет вызывать ensureVectorsExec как отдельно,
 // так и внутри уже открытой транзакции.
 type execer interface {
-	Exec(query string, args ...any) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // ensureVectorsExec идемпотентно создаёт таблицу vec_chunks с размерностью
@@ -391,26 +392,26 @@ type execer interface {
 // безопасным при повторном использовании, в том числе внутри транзакции, где
 // отдельная проверка через tableExists привела бы к взаимоблокировке
 // (соединение к базе одно, а Store.db занят открытой Tx).
-func ensureVectorsExec(e execer, dim int) error {
+func ensureVectorsExec(ctx context.Context, e execer, dim int) error {
 	vecDDL := fmt.Sprintf(
 		`CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(chunk_id INTEGER PRIMARY KEY, embedding float[%d] distance_metric=cosine)`,
 		dim,
 	)
-	if _, err := e.Exec(vecDDL); err != nil {
+	if _, err := e.ExecContext(ctx, vecDDL); err != nil {
 		return fmt.Errorf(i18n.T("store: create vec_chunks: %w", "store: создание vec_chunks: %w"), err)
 	}
 	return nil
 }
 
 // HasVectors сообщает, создана ли уже таблица векторов vec_chunks.
-func (s *Store) HasVectors() (bool, error) {
-	return s.tableExists("vec_chunks")
+func (s *Store) HasVectors(ctx context.Context) (bool, error) {
+	return s.tableExists(ctx, "vec_chunks")
 }
 
 // FileState возвращает сохранённые mtime, size и hash файла path.
 // found=false, если файл ещё не индексировался.
-func (s *Store) FileState(path string) (mtime, size int64, hash string, found bool, err error) {
-	err = s.db.QueryRow(`SELECT mtime, size, hash FROM files WHERE path=?`, path).Scan(&mtime, &size, &hash)
+func (s *Store) FileState(ctx context.Context, path string) (mtime, size int64, hash string, found bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT mtime, size, hash FROM files WHERE path=?`, path).Scan(&mtime, &size, &hash)
 	if err == sql.ErrNoRows {
 		return 0, 0, "", false, nil
 	}
@@ -423,8 +424,8 @@ func (s *Store) FileState(path string) (mtime, size int64, hash string, found bo
 // TouchFile обновляет mtime и size файла path, не трогая его чанки.
 // Используется, когда содержимое файла не изменилось (хэш совпал), но
 // нужно зафиксировать новые метаданные файловой системы.
-func (s *Store) TouchFile(path string, mtime, size int64) error {
-	res, err := s.db.Exec(`UPDATE files SET mtime=?, size=? WHERE path=?`, mtime, size, path)
+func (s *Store) TouchFile(ctx context.Context, path string, mtime, size int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE files SET mtime=?, size=? WHERE path=?`, mtime, size, path)
 	if err != nil {
 		return err
 	}
@@ -441,7 +442,7 @@ func (s *Store) TouchFile(path string, mtime, size int64) error {
 // ReplaceFile в одной транзакции удаляет прежние чанки файла path вместе с
 // их векторами и записывает новые chunks/vectors. Если файла ещё не было,
 // создаёт его.
-func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks []chunk.Chunk, vectors [][]float32) error {
+func (s *Store) ReplaceFile(ctx context.Context, path string, mtime, size int64, hash string, chunks []chunk.Chunk, vectors [][]float32) error {
 	if len(vectors) > 0 && len(chunks) != len(vectors) {
 		return errors.New(i18n.Tf(
 			"store: ReplaceFile: chunk count (%d) does not match vector count (%d)",
@@ -450,13 +451,13 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		))
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO files(path, mtime, size, hash) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, hash=excluded.hash`,
 		path, mtime, size, hash,
@@ -467,7 +468,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	// версии SQLite и драйвера), поэтому id всегда получаем отдельным
 	// запросом.
 	var fileID int64
-	if err := tx.QueryRow(`SELECT id FROM files WHERE path=?`, path).Scan(&fileID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM files WHERE path=?`, path).Scan(&fileID); err != nil {
 		return fmt.Errorf(i18n.T("store: get file_id: %w", "store: получение file_id: %w"), err)
 	}
 
@@ -475,36 +476,36 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	// chunk_id, прежде чем удалить сами чанки. Таблица может ещё не
 	// существовать (лексический индекс без эмбеддингов), тогда удаление
 	// пропускаем.
-	oldChunkIDs, err := chunkIDsTx(tx, fileID)
+	oldChunkIDs, err := chunkIDsTx(ctx, tx, fileID)
 	if err != nil {
 		return fmt.Errorf(i18n.T("store: select old chunk_id: %w", "store: выборка старых chunk_id: %w"), err)
 	}
-	if err := deleteChunkIndexes(tx, oldChunkIDs); err != nil {
+	if err := deleteChunkIndexes(ctx, tx, oldChunkIDs); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
 		return fmt.Errorf(i18n.T("store: delete old chunks: %w", "store: удаление старых chunks: %w"), err)
 	}
 
 	if len(vectors) > 0 {
-		if err := ensureVectorsExec(tx, len(vectors[0])); err != nil {
+		if err := ensureVectorsExec(ctx, tx, len(vectors[0])); err != nil {
 			return err
 		}
 	}
 
-	insChunk, err := tx.Prepare(`INSERT INTO chunks(file_id, seq, text, line_start, line_end) VALUES (?, ?, ?, ?, ?)`)
+	insChunk, err := tx.PrepareContext(ctx, `INSERT INTO chunks(file_id, seq, text, line_start, line_end) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer insChunk.Close()
-	insFTS, err := tx.Prepare(`INSERT INTO fts_chunks(body, path, ids, chunk_id) VALUES (?, ?, ?, ?)`)
+	insFTS, err := tx.PrepareContext(ctx, `INSERT INTO fts_chunks(body, path, ids, chunk_id) VALUES (?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer insFTS.Close()
 	var insVec *sql.Stmt
 	if len(vectors) > 0 {
-		insVec, err = tx.Prepare(`INSERT INTO vec_chunks(chunk_id, embedding) VALUES (?, ?)`)
+		insVec, err = tx.PrepareContext(ctx, `INSERT INTO vec_chunks(chunk_id, embedding) VALUES (?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -512,7 +513,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 	}
 
 	for i, c := range chunks {
-		res, err := insChunk.Exec(fileID, i, c.Text, c.StartLine, c.EndLine)
+		res, err := insChunk.ExecContext(ctx, fileID, i, c.Text, c.StartLine, c.EndLine)
 		if err != nil {
 			return fmt.Errorf(i18n.T("store: insert chunk seq=%d: %w", "store: вставка chunk seq=%d: %w"), i, err)
 		}
@@ -520,7 +521,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		if err != nil {
 			return err
 		}
-		if _, err := insFTS.Exec(stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text), chunkID); err != nil {
+		if _, err := insFTS.ExecContext(ctx, stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text), chunkID); err != nil {
 			return fmt.Errorf(i18n.T("store: insert into fts_chunks seq=%d: %w", "store: вставка в fts_chunks seq=%d: %w"), i, err)
 		}
 		if insVec == nil {
@@ -530,7 +531,7 @@ func (s *Store) ReplaceFile(path string, mtime, size int64, hash string, chunks 
 		if err != nil {
 			return fmt.Errorf(i18n.T("store: serialize vector seq=%d: %w", "store: сериализация вектора seq=%d: %w"), i, err)
 		}
-		if _, err := insVec.Exec(chunkID, blob); err != nil {
+		if _, err := insVec.ExecContext(ctx, chunkID, blob); err != nil {
 			return fmt.Errorf(i18n.T("store: insert vector seq=%d: %w", "store: вставка вектора seq=%d: %w"), i, err)
 		}
 	}
@@ -559,8 +560,8 @@ type Result struct {
 // по (path, seq) в ORDER BY делает порядок результатов с одинаковым
 // distance детерминированным - без него SQLite не гарантирует стабильный
 // порядок строк с равным значением сортировки.
-func (s *Store) Search(vector []float32, k int) ([]Result, error) {
-	hasVectors, err := s.HasVectors()
+func (s *Store) Search(ctx context.Context, vector []float32, k int) ([]Result, error) {
+	hasVectors, err := s.HasVectors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -576,7 +577,7 @@ func (s *Store) Search(vector []float32, k int) ([]Result, error) {
 		return nil, fmt.Errorf(i18n.T("store: serialize query vector: %w", "store: сериализация вектора запроса: %w"), err)
 	}
 
-	rows, err := s.db.Query(
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT f.path, c.seq, c.text, v.distance, c.line_start, c.line_end
 		 FROM vec_chunks v
 		 JOIN chunks c ON c.id = v.chunk_id
@@ -620,13 +621,13 @@ const bm25Weights = "1.0, 0.4, 0.8, 0.0"
 // оказался пустым (например, состоял только из пунктуации) или ничего не
 // найдено, возвращает пустой срез без ошибки. Тай-брейк по (path, seq) в
 // ORDER BY делает порядок результатов с одинаковым rank детерминированным.
-func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
+func (s *Store) SearchLexical(ctx context.Context, query string, k int) ([]Result, error) {
 	stemmed := stem.Query(query)
 	if stemmed == "" {
 		return nil, nil
 	}
 
-	rows, err := s.db.Query(
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT f.path, c.seq, c.text, bm25(fts_chunks, `+bm25Weights+`) AS rank,
 		        c.line_start, c.line_end
 		 FROM fts_chunks
@@ -670,9 +671,9 @@ func (s *Store) SearchLexical(query string, k int) ([]Result, error) {
 // Text, StartLine, EndLine) у Result уже есть, а Score/Distance просто
 // остаются нулевыми - завести под это единственное отличие новый тип
 // означало бы дублировать структуру ради двух неиспользуемых полей.
-func (s *Store) Chunks(path string, fromSeq, toSeq int) ([]Result, error) {
+func (s *Store) Chunks(ctx context.Context, path string, fromSeq, toSeq int) ([]Result, error) {
 	var exists bool
-	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM files WHERE path=?)`, path).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM files WHERE path=?)`, path).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if !exists {
@@ -683,7 +684,7 @@ func (s *Store) Chunks(path string, fromSeq, toSeq int) ([]Result, error) {
 		))
 	}
 
-	rows, err := s.db.Query(
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT f.path, c.seq, c.text, c.line_start, c.line_end
 		 FROM chunks c
 		 JOIN files f ON f.id = c.file_id
@@ -715,9 +716,9 @@ func (s *Store) Chunks(path string, fromSeq, toSeq int) ([]Result, error) {
 // в индексе). Отдельный запрос вместо чтения всех чанков нужен потому, что
 // диапазон требуется только для текста сообщения об ошибке, а у крупных
 // файлов чанков сотни и тянуть их текст ради двух чисел незачем.
-func (s *Store) ChunkSeqRange(path string) (min, max int, found bool, err error) {
+func (s *Store) ChunkSeqRange(ctx context.Context, path string) (min, max int, found bool, err error) {
 	var lo, hi sql.NullInt64
-	err = s.db.QueryRow(
+	err = s.db.QueryRowContext(ctx,
 		`SELECT min(c.seq), max(c.seq)
 		 FROM chunks c
 		 JOIN files f ON f.id = c.file_id
@@ -751,13 +752,13 @@ func subtreePattern(prefix string) string {
 
 // ListPaths возвращает пути всех проиндексированных файлов, чей путь равен
 // prefix или лежит внутри поддерева prefix. Пустой prefix возвращает все пути.
-func (s *Store) ListPaths(prefix string) ([]string, error) {
+func (s *Store) ListPaths(ctx context.Context, prefix string) ([]string, error) {
 	var rows *sql.Rows
 	var err error
 	if prefix == "" {
-		rows, err = s.db.Query(`SELECT path FROM files ORDER BY path`)
+		rows, err = s.db.QueryContext(ctx, `SELECT path FROM files ORDER BY path`)
 	} else {
-		rows, err = s.db.Query(`SELECT path FROM files WHERE `+subtreeCondition+` ORDER BY path`, prefix, subtreePattern(prefix))
+		rows, err = s.db.QueryContext(ctx, `SELECT path FROM files WHERE `+subtreeCondition+` ORDER BY path`, prefix, subtreePattern(prefix))
 	}
 	if err != nil {
 		return nil, err
@@ -786,13 +787,13 @@ type FileMeta struct {
 // prefix одним запросом. Пустой prefix означает всю базу. Нужен проверке
 // свежести индекса, где вызов FileState на каждый файл дал бы слишком
 // много запросов.
-func (s *Store) FileStates(prefix string) (map[string]FileMeta, error) {
+func (s *Store) FileStates(ctx context.Context, prefix string) (map[string]FileMeta, error) {
 	var rows *sql.Rows
 	var err error
 	if prefix == "" {
-		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files`)
+		rows, err = s.db.QueryContext(ctx, `SELECT path, mtime, size, hash FROM files`)
 	} else {
-		rows, err = s.db.Query(`SELECT path, mtime, size, hash FROM files WHERE `+subtreeCondition, prefix, subtreePattern(prefix))
+		rows, err = s.db.QueryContext(ctx, `SELECT path, mtime, size, hash FROM files WHERE `+subtreeCondition, prefix, subtreePattern(prefix))
 	}
 	if err != nil {
 		return nil, err
@@ -813,12 +814,12 @@ func (s *Store) FileStates(prefix string) (map[string]FileMeta, error) {
 
 // DeleteFiles удаляет перечисленные файлы вместе с их чанками и векторами.
 // Возвращает количество действительно удалённых файлов.
-func (s *Store) DeleteFiles(paths []string) (int, error) {
+func (s *Store) DeleteFiles(ctx context.Context, paths []string) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
 	}
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -826,7 +827,7 @@ func (s *Store) DeleteFiles(paths []string) (int, error) {
 
 	deleted := 0
 	for _, path := range paths {
-		n, err := deleteFileTx(tx, path)
+		n, err := deleteFileTx(ctx, tx, path)
 		if err != nil {
 			return 0, err
 		}
@@ -839,14 +840,14 @@ func (s *Store) DeleteFiles(paths []string) (int, error) {
 // DeleteSubtree удаляет все файлы, чей путь равен prefix или лежит внутри
 // поддерева prefix, вместе с их чанками и векторами. Возвращает количество
 // удалённых файлов.
-func (s *Store) DeleteSubtree(prefix string) (int, error) {
-	tx, err := s.db.Begin()
+func (s *Store) DeleteSubtree(ctx context.Context, prefix string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.Query(`SELECT path FROM files WHERE `+subtreeCondition, prefix, subtreePattern(prefix))
+	rows, err := tx.QueryContext(ctx, `SELECT path FROM files WHERE `+subtreeCondition, prefix, subtreePattern(prefix))
 	if err != nil {
 		return 0, err
 	}
@@ -867,7 +868,7 @@ func (s *Store) DeleteSubtree(prefix string) (int, error) {
 
 	deleted := 0
 	for _, p := range paths {
-		n, err := deleteFileTx(tx, p)
+		n, err := deleteFileTx(ctx, tx, p)
 		if err != nil {
 			return 0, err
 		}
@@ -880,9 +881,9 @@ func (s *Store) DeleteSubtree(prefix string) (int, error) {
 // deleteFileTx удаляет один файл path вместе с его чанками и векторами в
 // рамках уже открытой транзакции tx. Возвращает 1, если файл был найден и
 // удалён, 0 - если файла не было.
-func deleteFileTx(tx *sql.Tx, path string) (int, error) {
+func deleteFileTx(ctx context.Context, tx *sql.Tx, path string) (int, error) {
 	var fileID int64
-	err := tx.QueryRow(`SELECT id FROM files WHERE path=?`, path).Scan(&fileID)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM files WHERE path=?`, path).Scan(&fileID)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
@@ -890,17 +891,17 @@ func deleteFileTx(tx *sql.Tx, path string) (int, error) {
 		return 0, err
 	}
 
-	chunkIDs, err := chunkIDsTx(tx, fileID)
+	chunkIDs, err := chunkIDsTx(ctx, tx, fileID)
 	if err != nil {
 		return 0, err
 	}
-	if err := deleteChunkIndexes(tx, chunkIDs); err != nil {
+	if err := deleteChunkIndexes(ctx, tx, chunkIDs); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE file_id=?`, fileID); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`DELETE FROM files WHERE id=?`, fileID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id=?`, fileID); err != nil {
 		return 0, err
 	}
 
@@ -908,8 +909,8 @@ func deleteFileTx(tx *sql.Tx, path string) (int, error) {
 }
 
 // chunkIDsTx возвращает id всех чанков файла fileID в рамках транзакции tx.
-func chunkIDsTx(tx *sql.Tx, fileID int64) ([]int64, error) {
-	rows, err := tx.Query(`SELECT id FROM chunks WHERE file_id=?`, fileID)
+func chunkIDsTx(ctx context.Context, tx *sql.Tx, fileID int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM chunks WHERE file_id=?`, fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -928,33 +929,33 @@ func chunkIDsTx(tx *sql.Tx, fileID int64) ([]int64, error) {
 // deleteChunkIndexes удаляет из fts_chunks и vec_chunks (если таблица
 // векторов существует) записи перечисленных chunk_id. Удалений столько же,
 // сколько чанков у файла, поэтому выражения подготавливаются один раз.
-func deleteChunkIndexes(tx *sql.Tx, chunkIDs []int64) error {
+func deleteChunkIndexes(ctx context.Context, tx *sql.Tx, chunkIDs []int64) error {
 	if len(chunkIDs) == 0 {
 		return nil
 	}
 	var n int
-	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'`).Scan(&n); err != nil {
 		return fmt.Errorf(i18n.T("store: check vec_chunks: %w", "store: проверка vec_chunks: %w"), err)
 	}
 	if n > 0 {
-		delVec, err := tx.Prepare(`DELETE FROM vec_chunks WHERE chunk_id=?`)
+		delVec, err := tx.PrepareContext(ctx, `DELETE FROM vec_chunks WHERE chunk_id=?`)
 		if err != nil {
 			return err
 		}
 		defer delVec.Close()
 		for _, id := range chunkIDs {
-			if _, err := delVec.Exec(id); err != nil {
+			if _, err := delVec.ExecContext(ctx, id); err != nil {
 				return fmt.Errorf(i18n.T("store: delete vector chunk_id=%d: %w", "store: удаление вектора chunk_id=%d: %w"), id, err)
 			}
 		}
 	}
-	delFTS, err := tx.Prepare(`DELETE FROM fts_chunks WHERE chunk_id=?`)
+	delFTS, err := tx.PrepareContext(ctx, `DELETE FROM fts_chunks WHERE chunk_id=?`)
 	if err != nil {
 		return err
 	}
 	defer delFTS.Close()
 	for _, id := range chunkIDs {
-		if _, err := delFTS.Exec(id); err != nil {
+		if _, err := delFTS.ExecContext(ctx, id); err != nil {
 			return fmt.Errorf(i18n.T("store: delete from fts_chunks chunk_id=%d: %w", "store: удаление из fts_chunks chunk_id=%d: %w"), id, err)
 		}
 	}
@@ -980,44 +981,44 @@ type Stats struct {
 }
 
 // Stats возвращает сводную статистику по индексу.
-func (s *Store) Stats() (Stats, error) {
+func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	var st Stats
 
-	if err := s.db.QueryRow(`SELECT count(*) FROM files`).Scan(&st.Files); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM files`).Scan(&st.Files); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM chunks`).Scan(&st.Chunks); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM chunks`).Scan(&st.Chunks); err != nil {
 		return st, err
 	}
 
-	model, dim, err := s.Meta()
+	model, dim, err := s.Meta(ctx)
 	if err != nil {
 		return st, err
 	}
 	st.Model, st.Dim = model, dim
 
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='root'`).Scan(&st.Root); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='root'`).Scan(&st.Root); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key='indexed_at'`).Scan(&st.IndexedAt); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='indexed_at'`).Scan(&st.IndexedAt); err != nil {
 		return st, err
 	}
 
-	st.Roots, err = s.rootCounts()
+	st.Roots, err = s.rootCounts(ctx)
 	if err != nil {
 		return st, err
 	}
 
-	if err := s.db.QueryRow(`SELECT count(*) FROM fts_chunks`).Scan(&st.FTSRows); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM fts_chunks`).Scan(&st.FTSRows); err != nil {
 		return st, err
 	}
 
-	hasVectors, err := s.HasVectors()
+	hasVectors, err := s.HasVectors(ctx)
 	if err != nil {
 		return st, err
 	}
 	if hasVectors {
-		if err := s.db.QueryRow(`SELECT count(*) FROM vec_chunks`).Scan(&st.Vectors); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM vec_chunks`).Scan(&st.Vectors); err != nil {
 			return st, err
 		}
 	}
@@ -1031,13 +1032,13 @@ func (s *Store) Stats() (Stats, error) {
 // случай вложенных корней. Пути, не попавшие ни в один зарегистрированный
 // корень (возможно у старых баз с неполным meta.roots), группируются под
 // отдельным ключом, а не молча приписываются чужому корню.
-func (s *Store) rootCounts() (map[string]int, error) {
-	roots, err := s.Roots()
+func (s *Store) rootCounts(ctx context.Context) (map[string]int, error) {
+	roots, err := s.Roots(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	paths, err := s.ListPaths("")
+	paths, err := s.ListPaths(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1074,8 +1075,8 @@ func bestRoot(path string, roots []string) (string, bool) {
 }
 
 // SetIndexedAt записывает время последней успешной индексации в meta.
-func (s *Store) SetIndexedAt(t time.Time) error {
-	_, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES ('indexed_at', ?)
+func (s *Store) SetIndexedAt(ctx context.Context, t time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('indexed_at', ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, t.Format(time.RFC3339))
 	return err
 }

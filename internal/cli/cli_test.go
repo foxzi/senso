@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,7 +83,7 @@ func TestSnippet(t *testing.T) {
 func TestOpenStoreMissingDBFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nope.db")
 
-	s, _, err := openStore(path)
+	s, _, err := openStore(context.Background(), path)
 	if err == nil {
 		s.Close()
 		t.Fatal("openStore для несуществующей базы вернул успех")

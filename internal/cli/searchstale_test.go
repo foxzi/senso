@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -34,7 +35,7 @@ func withCapturedStderr(t *testing.T, fn func()) string {
 // openTestStore открывает базу, созданную mustBuildShowIndex.
 func openTestStore(t *testing.T, dbPath string) *store.Store {
 	t.Helper()
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,7 @@ func TestStaleResultPathsFreshFile(t *testing.T) {
 	dbPath, filePath := mustBuildShowIndex(t)
 	s := openTestStore(t, dbPath)
 
-	stale, err := staleResultPaths(s, []store.Result{{Path: filePath, Seq: 0}})
+	stale, err := staleResultPaths(context.Background(), s, []store.Result{{Path: filePath, Seq: 0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestStaleResultPathsModifiedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stale, err := staleResultPaths(s, []store.Result{{Path: filePath, Seq: 0}})
+	stale, err := staleResultPaths(context.Background(), s, []store.Result{{Path: filePath, Seq: 0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestStaleResultPathsMissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stale, err := staleResultPaths(s, []store.Result{{Path: filePath, Seq: 0}})
+	stale, err := staleResultPaths(context.Background(), s, []store.Result{{Path: filePath, Seq: 0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestStaleResultPathsDeduplicatesPaths(t *testing.T) {
 		{Path: filePath, Seq: 1},
 		{Path: filePath, Seq: 2},
 	}
-	stale, err := staleResultPaths(s, results)
+	stale, err := staleResultPaths(context.Background(), s, results)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestWarnStaleResultsWritesToStderr(t *testing.T) {
 
 	var runErr error
 	out := withCapturedStderr(t, func() {
-		runErr = warnStaleResults(s, []store.Result{{Path: filePath, Seq: 0}})
+		runErr = warnStaleResults(context.Background(), s, []store.Result{{Path: filePath, Seq: 0}})
 	})
 	if runErr != nil {
 		t.Fatal(runErr)
@@ -142,7 +143,7 @@ func TestWarnStaleResultsSilentForFreshFiles(t *testing.T) {
 
 	var runErr error
 	out := withCapturedStderr(t, func() {
-		runErr = warnStaleResults(s, []store.Result{{Path: filePath, Seq: 0}})
+		runErr = warnStaleResults(context.Background(), s, []store.Result{{Path: filePath, Seq: 0}})
 	})
 	if runErr != nil {
 		t.Fatal(runErr)

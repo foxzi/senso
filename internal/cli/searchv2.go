@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -147,7 +148,7 @@ func sourceTypeFor(path string) string {
 // buildSearchResponseV2 собирает ответ формата json-v2. Предупреждения
 // строятся по состоянию файлов на диске: результат мог быть найден по
 // тексту, сохранённому в индексе до изменения файла.
-func buildSearchResponseV2(s *store.Store, results []store.Result, opts searchOptions, filter *resultFilter) (searchResponseV2, error) {
+func buildSearchResponseV2(ctx context.Context, s *store.Store, results []store.Result, opts searchOptions, filter *resultFilter) (searchResponseV2, error) {
 	resp := searchResponseV2{
 		Schema:   searchSchemaV2,
 		Mode:     searchMode(opts),
@@ -175,7 +176,7 @@ func buildSearchResponseV2(s *store.Store, results []store.Result, opts searchOp
 		})
 	}
 
-	warnings, err := staleWarningsV2(s, results)
+	warnings, err := staleWarningsV2(ctx, s, results)
 	if err != nil {
 		return searchResponseV2{}, err
 	}
@@ -206,8 +207,8 @@ func buildSearchFiltersV2(opts searchOptions, filter *resultFilter) searchFilter
 // staleWarningsV2 проверяет файлы результатов на диске и возвращает по
 // одному предупреждению на уникальный путь, в порядке первого появления
 // пути в выдаче.
-func staleWarningsV2(s *store.Store, results []store.Result) ([]searchWarningV2, error) {
-	stale, err := staleResultPaths(s, results)
+func staleWarningsV2(ctx context.Context, s *store.Store, results []store.Result) ([]searchWarningV2, error) {
+	stale, err := staleResultPaths(ctx, s, results)
 	if err != nil {
 		return nil, err
 	}
@@ -239,8 +240,8 @@ func staleMessageV2(code string) string {
 // printSearchJSONV2 печатает ответ формата json-v2 в stdout одним
 // объектом. Пути абсолютные, чтобы ref можно было сразу передать в
 // senso show из любой рабочей директории.
-func printSearchJSONV2(s *store.Store, results []store.Result, opts searchOptions, filter *resultFilter) error {
-	resp, err := buildSearchResponseV2(s, results, opts, filter)
+func printSearchJSONV2(ctx context.Context, s *store.Store, results []store.Result, opts searchOptions, filter *resultFilter) error {
+	resp, err := buildSearchResponseV2(ctx, s, results, opts, filter)
 	if err != nil {
 		return err
 	}

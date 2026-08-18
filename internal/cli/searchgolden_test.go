@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -22,7 +23,7 @@ const filePlaceholder = "{FILE}"
 // нельзя было внести незаметно.
 func TestSearchJSONV2Golden(t *testing.T) {
 	dbPath, filePath := mustBuildShowIndex(t)
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestSearchJSONV2Golden(t *testing.T) {
 		{Path: filePath, Seq: 3, Text: "chunk text 3", Score: 0.016, StartLine: 4, EndLine: 4},
 	}
 
-	resp, err := buildSearchResponseV2(s, results, opts, filter)
+	resp, err := buildSearchResponseV2(context.Background(), s, results, opts, filter)
 	if err != nil {
 		t.Fatalf("buildSearchResponseV2 вернул ошибку: %v", err)
 	}

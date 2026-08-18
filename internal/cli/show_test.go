@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -165,12 +166,12 @@ func TestStaleWarningModified(t *testing.T) {
 func mustBuildShowIndex(t *testing.T) (dbPath, filePath string) {
 	t.Helper()
 	dbPath = filepath.Join(t.TempDir(), "index.db")
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Init("", 0, "/root"); err != nil {
+	if err := s.Init(context.Background(), "", 0, "/root"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -187,7 +188,7 @@ func mustBuildShowIndex(t *testing.T) (dbPath, filePath string) {
 	for i := range chunks {
 		chunks[i] = chunk.Chunk{Text: "chunk text " + string(rune('0'+i)), StartLine: i + 1, EndLine: i + 1}
 	}
-	if err := s.ReplaceFile(filePath, info.ModTime().UnixNano(), info.Size(), "hash", chunks, nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), filePath, info.ModTime().UnixNano(), info.Size(), "hash", chunks, nil); err != nil {
 		t.Fatal(err)
 	}
 	return dbPath, filePath

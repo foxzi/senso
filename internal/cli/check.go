@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -206,6 +207,8 @@ func (r *checkReport) stale() bool {
 // файлов на диске, ничего не меняя. База открывается только для чтения,
 // поэтому проверка не может повредить индекс.
 func RunCheck(args []string) error {
+	ctx := context.Background()
+
 	opts, err := parseCheckArgs(args)
 	if err != nil {
 		return err
@@ -233,27 +236,27 @@ func RunCheck(args []string) error {
 	}
 	rep.Database = dbPath
 
-	s, err := store.OpenReadOnly(dbPath)
+	s, err := store.OpenReadOnly(ctx, dbPath)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	if err := s.CheckSchema(); err != nil {
+	if err := s.CheckSchema(ctx); err != nil {
 		return err
 	}
 
 	// Правила отбора и нарезки берём из базы для всех флагов, которые
 	// пользователь не задал явно: проверять индекс нужно теми же
 	// правилами, которыми он построен.
-	if err := applyStoredParams(s, &opts); err != nil {
+	if err := applyStoredParams(ctx, s, &opts); err != nil {
 		return err
 	}
 
-	if err := collectIndexState(s, opts, rep); err != nil {
+	if err := collectIndexState(ctx, s, opts, rep); err != nil {
 		return err
 	}
-	if err := compareTree(root, opts, s, rep); err != nil {
+	if err := compareTree(ctx, root, opts, s, rep); err != nil {
 		return err
 	}
 
@@ -307,20 +310,20 @@ func (r *checkReport) addFailure(path, code string, err error) {
 
 // collectIndexState читает из базы метаданные индекса и проверяет, что
 // текущие параметры совместимы с тем, как индекс был построен.
-func collectIndexState(s *store.Store, opts checkOptions, rep *checkReport) error {
-	model, _, err := s.Meta()
+func collectIndexState(ctx context.Context, s *store.Store, opts checkOptions, rep *checkReport) error {
+	model, _, err := s.Meta(ctx)
 	if err != nil {
 		return err
 	}
 	rep.Model = model
 
-	hasVectors, err := s.HasVectors()
+	hasVectors, err := s.HasVectors(ctx)
 	if err != nil {
 		return err
 	}
 	rep.Vectors = hasVectors
 
-	if indexedAt, err := s.GetMeta("indexed_at"); err == nil {
+	if indexedAt, err := s.GetMeta(ctx, "indexed_at"); err == nil {
 		rep.IndexedAt = indexedAt
 	}
 
@@ -329,7 +332,7 @@ func collectIndexState(s *store.Store, opts checkOptions, rep *checkReport) erro
 	// index её отвергнет, а check предупреждает об этом заранее. Базы,
 	// созданные до появления этих ключей, параметров не содержат -
 	// сравнивать не с чем.
-	if stored, ok, err := loadChunkParams(s); err == nil && ok {
+	if stored, ok, err := loadChunkParams(ctx, s); err == nil && ok {
 		rep.Chunker = stored.Chunker
 		if diff := chunkParamsDiff(stored, wantChunkParams(opts.indexOptions)); len(diff) > 0 {
 			rep.addIssue(issueChunkParamsMismatch, fmt.Sprintf(i18n.T("index was built with other chunking parameters: %s", "индекс построен с другими параметрами нарезки: %s"), strings.Join(diff, ", ")))
@@ -351,11 +354,11 @@ func collectIndexState(s *store.Store, opts checkOptions, rep *checkReport) erro
 
 // compareTree сравнивает файлы поддерева root на диске с состоянием индекса
 // и раскладывает расхождения по категориям отчёта.
-func compareTree(root string, opts checkOptions, s *store.Store, rep *checkReport) error {
+func compareTree(ctx context.Context, root string, opts checkOptions, s *store.Store, rep *checkReport) error {
 	// Состояние индекса читается до обхода: зная его, можно запоминать
 	// причины исключения только для проиндексированных файлов, а не для
 	// всего отброшенного дерева.
-	indexed, err := s.FileStates(root)
+	indexed, err := s.FileStates(ctx, root)
 	if err != nil {
 		return err
 	}

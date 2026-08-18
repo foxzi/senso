@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,13 +57,13 @@ func TestChunkParamsDiff(t *testing.T) {
 func TestIndexRecordsChunkParams(t *testing.T) {
 	dir := openIndexedDir(t, "--chunker", "text", "--chunk-size", "800", "--overlap", "50")
 
-	s, err := store.OpenReadOnly(filepath.Join(dir, ".senso", "index.db"))
+	s, err := store.OpenReadOnly(context.Background(), filepath.Join(dir, ".senso", "index.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 
-	got, ok, err := loadChunkParams(s)
+	got, ok, err := loadChunkParams(context.Background(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,11 +102,11 @@ func TestIndexFillsMissingChunkParams(t *testing.T) {
 	dir := openIndexedDir(t)
 	dbPath := filepath.Join(dir, ".senso", "index.db")
 
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetMeta(metaChunker, ""); err != nil {
+	if err := s.SetMeta(context.Background(), metaChunker, ""); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -114,13 +115,13 @@ func TestIndexFillsMissingChunkParams(t *testing.T) {
 		t.Fatalf("reindex of a params-less database: %v", err)
 	}
 
-	ro, err := store.OpenReadOnly(dbPath)
+	ro, err := store.OpenReadOnly(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ro.Close()
 
-	got, ok, err := loadChunkParams(ro)
+	got, ok, err := loadChunkParams(context.Background(), ro)
 	if err != nil {
 		t.Fatal(err)
 	}

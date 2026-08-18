@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -40,19 +41,19 @@ func wantChunkParams(opts indexOptions) chunkParams {
 // loadChunkParams читает параметры нарезки из базы. Второе возвращаемое
 // значение - признак того, что параметры записаны: базы, созданные senso до
 // появления этих ключей, их не содержат, и сравнивать там не с чем.
-func loadChunkParams(s *store.Store) (chunkParams, bool, error) {
-	chunker, err := s.GetMeta(metaChunker)
+func loadChunkParams(ctx context.Context, s *store.Store) (chunkParams, bool, error) {
+	chunker, err := s.GetMeta(ctx, metaChunker)
 	if err != nil {
 		return chunkParams{}, false, err
 	}
 	if chunker == "" {
 		return chunkParams{}, false, nil
 	}
-	size, err := metaInt(s, metaChunkSize)
+	size, err := metaInt(ctx, s, metaChunkSize)
 	if err != nil {
 		return chunkParams{}, false, err
 	}
-	overlap, err := metaInt(s, metaOverlap)
+	overlap, err := metaInt(ctx, s, metaOverlap)
 	if err != nil {
 		return chunkParams{}, false, err
 	}
@@ -62,8 +63,8 @@ func loadChunkParams(s *store.Store) (chunkParams, bool, error) {
 // metaInt читает целочисленное значение из meta; отсутствующий или
 // нечисловой ключ даёт 0, а не ошибку - параметры нарезки не настолько
 // важны, чтобы из-за них падала вся команда.
-func metaInt(s *store.Store, key string) (int, error) {
-	raw, err := s.GetMeta(key)
+func metaInt(ctx context.Context, s *store.Store, key string) (int, error) {
+	raw, err := s.GetMeta(ctx, key)
 	if err != nil {
 		return 0, err
 	}
@@ -75,14 +76,14 @@ func metaInt(s *store.Store, key string) (int, error) {
 }
 
 // saveChunkParams записывает параметры нарезки в meta.
-func saveChunkParams(s *store.Store, p chunkParams) error {
-	if err := s.SetMeta(metaChunker, p.Chunker); err != nil {
+func saveChunkParams(ctx context.Context, s *store.Store, p chunkParams) error {
+	if err := s.SetMeta(ctx, metaChunker, p.Chunker); err != nil {
 		return err
 	}
-	if err := s.SetMeta(metaChunkSize, strconv.Itoa(p.ChunkSize)); err != nil {
+	if err := s.SetMeta(ctx, metaChunkSize, strconv.Itoa(p.ChunkSize)); err != nil {
 		return err
 	}
-	return s.SetMeta(metaOverlap, strconv.Itoa(p.Overlap))
+	return s.SetMeta(ctx, metaOverlap, strconv.Itoa(p.Overlap))
 }
 
 // chunkParamsDiff перечисляет расхождения между параметрами базы и
@@ -107,14 +108,14 @@ func chunkParamsDiff(stored, want chunkParams) []string {
 // прекращается: senso не умеет пересчитывать нетронутые файлы, поэтому
 // молчаливое продолжение оставило бы в базе чанки двух разных нарезок.
 // Базам без записанных параметров они просто проставляются.
-func ensureChunkParams(s *store.Store, opts indexOptions) error {
+func ensureChunkParams(ctx context.Context, s *store.Store, opts indexOptions) error {
 	want := wantChunkParams(opts)
-	stored, ok, err := loadChunkParams(s)
+	stored, ok, err := loadChunkParams(ctx, s)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return saveIndexParams(s, opts)
+		return saveIndexParams(ctx, s, opts)
 	}
 	if diff := chunkParamsDiff(stored, want); len(diff) > 0 {
 		return fmt.Errorf(i18n.T(
@@ -122,7 +123,7 @@ func ensureChunkParams(s *store.Store, opts indexOptions) error {
 			"индекс построен с другими параметрами нарезки (%s); переиндексируйте базу заново (удалите .senso) или повторите параметры индекса",
 		), strings.Join(diff, ", "))
 	}
-	return saveSelectionParams(s, wantSelectionParams(opts))
+	return saveSelectionParams(ctx, s, wantSelectionParams(opts))
 }
 
 // selectionParams - правила отбора файлов, с которыми построен индекс.
@@ -158,8 +159,8 @@ func wantSelectionParams(opts indexOptions) selectionParams {
 // loadSelectionParams читает правила отбора из базы. Второе возвращаемое
 // значение - признак того, что правила записаны: у баз, созданных без них,
 // подставлять нечего.
-func loadSelectionParams(s *store.Store) (selectionParams, bool, error) {
-	raw, err := s.GetMeta(metaSelection)
+func loadSelectionParams(ctx context.Context, s *store.Store) (selectionParams, bool, error) {
+	raw, err := s.GetMeta(ctx, metaSelection)
 	if err != nil || raw == "" {
 		return selectionParams{}, false, err
 	}
@@ -173,21 +174,21 @@ func loadSelectionParams(s *store.Store) (selectionParams, bool, error) {
 }
 
 // saveSelectionParams записывает правила отбора в meta.
-func saveSelectionParams(s *store.Store, sel selectionParams) error {
+func saveSelectionParams(ctx context.Context, s *store.Store, sel selectionParams) error {
 	data, err := json.Marshal(sel)
 	if err != nil {
 		return err
 	}
-	return s.SetMeta(metaSelection, string(data))
+	return s.SetMeta(ctx, metaSelection, string(data))
 }
 
 // saveIndexParams сохраняет в meta все параметры, влияющие на состав
 // индекса: нарезку и правила отбора файлов.
-func saveIndexParams(s *store.Store, opts indexOptions) error {
-	if err := saveChunkParams(s, wantChunkParams(opts)); err != nil {
+func saveIndexParams(ctx context.Context, s *store.Store, opts indexOptions) error {
+	if err := saveChunkParams(ctx, s, wantChunkParams(opts)); err != nil {
 		return err
 	}
-	return saveSelectionParams(s, wantSelectionParams(opts))
+	return saveSelectionParams(ctx, s, wantSelectionParams(opts))
 }
 
 // applyStoredParams подставляет параметры индексации из базы вместо флагов,
@@ -196,10 +197,10 @@ func saveIndexParams(s *store.Store, opts indexOptions) error {
 // индекса выглядели бы исключёнными и проверка ложно считала бы его
 // устаревшим. Явно заданный флаг всегда сильнее записи в базе - так
 // проверяют намерение переиндексировать дерево по другим правилам.
-func applyStoredParams(s *store.Store, opts *checkOptions) error {
+func applyStoredParams(ctx context.Context, s *store.Store, opts *checkOptions) error {
 	setByUser := func(name string) bool { return opts.setFlags[name] }
 
-	if chunkP, ok, err := loadChunkParams(s); err != nil {
+	if chunkP, ok, err := loadChunkParams(ctx, s); err != nil {
 		return err
 	} else if ok {
 		if !setByUser("chunker") {
@@ -213,7 +214,7 @@ func applyStoredParams(s *store.Store, opts *checkOptions) error {
 		}
 	}
 
-	sel, ok, err := loadSelectionParams(s)
+	sel, ok, err := loadSelectionParams(ctx, s)
 	if err != nil || !ok {
 		return err
 	}

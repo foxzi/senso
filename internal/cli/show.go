@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -116,23 +117,25 @@ func parseShowArgs(args []string) (showOptions, error) {
 // элементы с видимым перекрытием проще реализовать и не вводят в
 // заблуждение о том, что на самом деле хранится в индексе.
 func RunShow(args []string) error {
+	ctx := context.Background()
+
 	opts, err := parseShowArgs(args)
 	if err != nil {
 		return err
 	}
 
-	s, _, err := openStore(opts.DB)
+	s, _, err := openStore(ctx, opts.DB)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	chunks, err := s.Chunks(opts.Path, opts.Seq-opts.Before, opts.Seq+opts.After)
+	chunks, err := s.Chunks(ctx, opts.Path, opts.Seq-opts.Before, opts.Seq+opts.After)
 	if err != nil {
 		return err
 	}
 	if !hasSeq(chunks, opts.Seq) {
-		return showChunkNotFoundError(s, opts.Path, opts.Seq)
+		return showChunkNotFoundError(ctx, s, opts.Path, opts.Seq)
 	}
 
 	// Проверка свежести не блокирует вывод: агенту полезнее получить
@@ -140,7 +143,7 @@ func RunShow(args []string) error {
 	// о переиндексации в любом случае принимает не эта команда, а senso
 	// index. Поэтому расхождение только предупреждает через stderr и
 	// отражается в JSON, код выхода остаётся 0.
-	stale, reason, err := checkStale(opts.Path, s)
+	stale, reason, err := checkStale(ctx, opts.Path, s)
 	if err != nil {
 		return err
 	}
@@ -169,8 +172,8 @@ func hasSeq(chunks []store.Result, seq int) bool {
 // Если у файла чанки есть, в сообщении указывается их доступный диапазон;
 // случай, когда файла нет в индексе вовсе, отсекается раньше - его ловит
 // сама s.Chunks.
-func showChunkNotFoundError(s *store.Store, path string, seq int) error {
-	lo, hi, found, err := s.ChunkSeqRange(path)
+func showChunkNotFoundError(ctx context.Context, s *store.Store, path string, seq int) error {
+	lo, hi, found, err := s.ChunkSeqRange(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -191,8 +194,8 @@ func showChunkNotFoundError(s *store.Store, path string, seq int) error {
 // наносекундах, как его записывает senso index (info.ModTime().UnixNano()).
 // reason - машиночитаемый код причины: "missing" (файл исчез с диска) или
 // "modified" (mtime/size расходятся); при stale=false reason пуст.
-func checkStale(path string, s *store.Store) (stale bool, reason string, err error) {
-	dbMtime, dbSize, _, found, err := s.FileState(path)
+func checkStale(ctx context.Context, path string, s *store.Store) (stale bool, reason string, err error) {
+	dbMtime, dbSize, _, found, err := s.FileState(ctx, path)
 	if err != nil {
 		return false, "", err
 	}

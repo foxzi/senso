@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -33,6 +34,8 @@ func statusFlagSet(opts *statusOptions) *flag.FlagSet {
 // RunStatus реализует подкоманду "status": печатает сводную информацию
 // об индексе - путь к базе, корень, модель, размер и время индексации.
 func RunStatus(args []string) error {
+	ctx := context.Background()
+
 	var opts statusOptions
 	fs := statusFlagSet(&opts)
 	fs.Usage = func() {
@@ -45,13 +48,13 @@ func RunStatus(args []string) error {
 		return usagef(i18n.T("status: unknown arguments: %v", "status: неизвестные аргументы: %v"), fs.Args())
 	}
 
-	s, path, err := openStore(opts.DB)
+	s, path, err := openStore(ctx, opts.DB)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	stats, err := s.Stats()
+	stats, err := s.Stats(ctx)
 	if err != nil {
 		return err
 	}
@@ -64,7 +67,7 @@ func RunStatus(args []string) error {
 	// Параметры нарезки нужны, чтобы повторную индексацию можно было
 	// запустить теми же флагами: index отвергает другие. В базах, созданных
 	// до появления этих ключей, их нет - тогда строка просто не печатается.
-	params, _, _ := loadChunkParams(s)
+	params, _, _ := loadChunkParams(ctx, s)
 
 	if opts.JSON {
 		return printStatusJSON(path, dbSize, stats, params)

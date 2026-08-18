@@ -25,6 +25,11 @@ const embedBatchSize = 32
 // RunIndex реализует подкоманду "index": строит или обновляет индекс для
 // указанного пути.
 func RunIndex(args []string) error {
+	// dbCtx - контекст для операций с базой данных: они намеренно не
+	// отменяются посреди обработки файла, текущий файл всегда
+	// дописывается до конца (см. sigCtx ниже).
+	dbCtx := context.Background()
+
 	opts, err := parseIndexArgs(args)
 	if err != nil {
 		return err
@@ -35,13 +40,13 @@ func RunIndex(args []string) error {
 		return err
 	}
 
-	s, dbPath, err := openIndexStore(opts)
+	s, dbPath, err := openIndexStore(dbCtx, opts)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	fresh, err := prepareIndexStore(s, opts, root)
+	fresh, err := prepareIndexStore(dbCtx, s, opts, root)
 	if err != nil {
 		return err
 	}
@@ -62,20 +67,20 @@ func RunIndex(args []string) error {
 	}
 	rep.Scanned = len(candidates)
 
-	ix, err := newIndexer(s, opts, rep, root, fresh)
+	ix, err := newIndexer(dbCtx, s, opts, rep, root, fresh)
 	if err != nil {
 		return err
 	}
 
-	// ctx отслеживает только Ctrl+C/SIGTERM между файлами: текущий файл
-	// всегда докатывается до конца, чтобы не оставить индекс в
+	// sigCtx отслеживает только Ctrl+C/SIGTERM между файлами: текущий
+	// файл всегда докатывается до конца, чтобы не оставить индекс в
 	// промежуточном состоянии.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	start := time.Now()
 	for i, path := range candidates {
-		if ctx.Err() != nil {
+		if sigCtx.Err() != nil {
 			rep.Interrupted = true
 			break
 		}
@@ -84,7 +89,7 @@ func RunIndex(args []string) error {
 		}
 	}
 
-	if err := ix.finish(); err != nil {
+	if err := ix.finish(dbCtx); err != nil {
 		return err
 	}
 
@@ -106,7 +111,7 @@ func RunIndex(args []string) error {
 // отсутствие базы - не ошибка: новая создаётся в текущей директории. Именно
 // в текущей, а не в индексируемом пути: базу ищут обходом вверх, поэтому
 // созданная внутри подкаталога она была бы не видна из корня проекта.
-func openIndexStore(opts indexOptions) (*store.Store, string, error) {
+func openIndexStore(ctx context.Context, opts indexOptions) (*store.Store, string, error) {
 	dbPath, err := dbpath.Find(opts.DB)
 	if errors.Is(err, dbpath.ErrNotFound) {
 		wd, wdErr := os.Getwd()
@@ -119,11 +124,11 @@ func openIndexStore(opts indexOptions) (*store.Store, string, error) {
 		return nil, "", err
 	}
 
-	s, err := store.Open(dbPath)
+	s, err := store.Open(ctx, dbPath)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := s.CheckSchema(); err != nil {
+	if err := s.CheckSchema(ctx); err != nil {
 		s.Close()
 		return nil, "", err
 	}
@@ -134,12 +139,12 @@ func openIndexStore(opts indexOptions) (*store.Store, string, error) {
 // схему, когда это возможно сделать до обхода файлов. Возвращает fresh=true,
 // если схемы ещё нет (свежая база с --embed: размерность векторов станет
 // известна только после первого эмбеддинга).
-func prepareIndexStore(s *store.Store, opts indexOptions, root string) (bool, error) {
+func prepareIndexStore(ctx context.Context, s *store.Store, opts indexOptions, root string) (bool, error) {
 	// Если meta ещё нет (свежая база), схема не создана. Проверка
 	// совпадения модели нужна только при --embed: без него модель в базе
 	// не используется вообще.
 	fresh := true
-	if existingModel, existingDim, metaErr := s.Meta(); metaErr == nil {
+	if existingModel, existingDim, metaErr := s.Meta(ctx); metaErr == nil {
 		fresh = false
 		if opts.Embed && existingModel != "" && existingModel != opts.Model {
 			return false, fmt.Errorf(i18n.T("index was built with model %s (dim %d); remove .senso/index.db or specify --model %s", "индекс построен моделью %s (dim %d); удалите .senso/index.db или укажите --model %s"), existingModel, existingDim, existingModel)
@@ -149,7 +154,7 @@ func prepareIndexStore(s *store.Store, opts indexOptions, root string) (bool, er
 	// Параметры нарезки сверяем до первой записи: продолжать индексацию
 	// с другой нарезкой нельзя, иначе база смешает чанки двух стратегий.
 	if !fresh {
-		if err := ensureChunkParams(s, opts); err != nil {
+		if err := ensureChunkParams(ctx, s, opts); err != nil {
 			return false, err
 		}
 	}
@@ -159,7 +164,7 @@ func prepareIndexStore(s *store.Store, opts indexOptions, root string) (bool, er
 	// старые значения. Пишем сразу, если схема уже существует (!fresh);
 	// для свежей базы это делается после первого s.Init.
 	if opts.Embed && !fresh {
-		if err := savePrefixes(s, opts); err != nil {
+		if err := savePrefixes(ctx, s, opts); err != nil {
 			return false, err
 		}
 	}
@@ -168,11 +173,11 @@ func prepareIndexStore(s *store.Store, opts indexOptions, root string) (bool, er
 	// не дожидаясь эмбеддинга (которого не будет), к Ollama вообще не
 	// обращаемся.
 	if fresh && !opts.Embed {
-		if err := s.Init("", 0, root); err != nil {
+		if err := s.Init(ctx, "", 0, root); err != nil {
 			return false, err
 		}
 		fresh = false
-		if err := saveIndexParams(s, opts); err != nil {
+		if err := saveIndexParams(ctx, s, opts); err != nil {
 			return false, err
 		}
 	}
@@ -184,6 +189,10 @@ func prepareIndexStore(s *store.Store, opts indexOptions, root string) (bool, er
 // индексации: подключение к базе, отчёт и флаги, меняющиеся по ходу работы
 // (fresh, backfill).
 type indexer struct {
+	// ctx - контекст для операций с базой данных, отдельный от
+	// сигнального контекста цикла индексации: текущий файл всегда
+	// дописывается до конца, даже если пришёл Ctrl+C.
+	ctx      context.Context
 	s        *store.Store
 	opts     indexOptions
 	rep      *indexReport
@@ -197,8 +206,8 @@ type indexer struct {
 
 // newIndexer готовит состояние цикла индексации: клиент эмбеддингов,
 // стратегию нарезки и режим дозаполнения векторов.
-func newIndexer(s *store.Store, opts indexOptions, rep *indexReport, root string, fresh bool) (*indexer, error) {
-	ix := &indexer{s: s, opts: opts, rep: rep, root: root, fresh: fresh}
+func newIndexer(ctx context.Context, s *store.Store, opts indexOptions, rep *indexReport, root string, fresh bool) (*indexer, error) {
+	ix := &indexer{ctx: ctx, s: s, opts: opts, rep: rep, root: root, fresh: fresh}
 	ix.cwd, _ = os.Getwd()
 	// Значение флага уже проверено при разборе аргументов.
 	ix.strategy, _ = chunk.ParseStrategy(opts.Chunker)
@@ -212,7 +221,7 @@ func newIndexer(s *store.Store, opts indexOptions, rep *indexReport, root string
 	// mtime/size отключается на этот запуск, чтобы все файлы прошли через
 	// эмбеддинг. См. комментарий к applyBackfill.
 	if opts.Embed && !fresh {
-		hasVectors, err := s.HasVectors()
+		hasVectors, err := s.HasVectors(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -241,7 +250,7 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 	var dbHash string
 	var found bool
 	if !ix.fresh {
-		dbMtime, dbSize, dbHash, found, err = ix.s.FileState(path)
+		dbMtime, dbSize, dbHash, found, err = ix.s.FileState(ix.ctx, path)
 		if err != nil {
 			return err
 		}
@@ -276,7 +285,7 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 		return nil
 	case actionTouch:
 		// Содержимое то же, обновляются только mtime и размер.
-		if err := ix.s.TouchFile(path, curMtime, curSize); err != nil {
+		if err := ix.s.TouchFile(ix.ctx, path, curMtime, curSize); err != nil {
 			return err
 		}
 		ix.rep.Unchanged++
@@ -311,7 +320,7 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 		return nil
 	}
 
-	if err := ix.s.ReplaceFile(path, curMtime, curSize, curHash, chunks, vectors); err != nil {
+	if err := ix.s.ReplaceFile(ix.ctx, path, curMtime, curSize, curHash, chunks, vectors); err != nil {
 		return err
 	}
 	if found {
@@ -330,51 +339,51 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 // initSchema создаёт схему свежей базы, когда размерность векторов стала
 // известна после первого эмбеддинга, и записывает параметры индексации.
 func (ix *indexer) initSchema(dim int) error {
-	if err := ix.s.Init(ix.opts.Model, dim, ix.root); err != nil {
+	if err := ix.s.Init(ix.ctx, ix.opts.Model, dim, ix.root); err != nil {
 		return err
 	}
 	ix.fresh = false
-	if err := saveIndexParams(ix.s, ix.opts); err != nil {
+	if err := saveIndexParams(ix.ctx, ix.s, ix.opts); err != nil {
 		return err
 	}
-	return savePrefixes(ix.s, ix.opts)
+	return savePrefixes(ix.ctx, ix.s, ix.opts)
 }
 
 // finish завершает индексацию: подчищает удалённые файлы (--prune) и
 // отмечает время и корень. При прерывании индекс остаётся консистентным, но
 // неполным: время индексации не отмечается и удалённые файлы не подчищаются,
 // иначе незатронутые записи выглядели бы как проверенные.
-func (ix *indexer) finish() error {
+func (ix *indexer) finish(ctx context.Context) error {
 	if ix.rep.Interrupted || ix.fresh {
 		return nil
 	}
 	if ix.opts.Prune {
 		var err error
-		ix.rep.Deleted, err = pruneMissing(ix.s, ix.root)
+		ix.rep.Deleted, err = pruneMissing(ctx, ix.s, ix.root)
 		if err != nil {
 			return err
 		}
 	}
-	if err := ix.s.SetIndexedAt(time.Now()); err != nil {
+	if err := ix.s.SetIndexedAt(ctx, time.Now()); err != nil {
 		return err
 	}
-	return ix.s.AddRoot(ix.root)
+	return ix.s.AddRoot(ctx, ix.root)
 }
 
 // savePrefixes сохраняет в meta префиксы запроса и документа, заданные при
 // индексации, чтобы "senso search --semantic" мог применять их
 // автоматически, без повторного указания пользователем.
-func savePrefixes(s *store.Store, opts indexOptions) error {
-	if err := s.SetMeta("query_prefix", opts.QueryPrefix); err != nil {
+func savePrefixes(ctx context.Context, s *store.Store, opts indexOptions) error {
+	if err := s.SetMeta(ctx, "query_prefix", opts.QueryPrefix); err != nil {
 		return err
 	}
-	return s.SetMeta("doc_prefix", opts.DocPrefix)
+	return s.SetMeta(ctx, "doc_prefix", opts.DocPrefix)
 }
 
 // pruneMissing удаляет из индекса файлы поддерева root, отсутствующие на
 // диске. Файлы других корней, хранящиеся в той же базе, не затрагиваются.
-func pruneMissing(s *store.Store, root string) (int, error) {
-	paths, err := s.ListPaths("")
+func pruneMissing(ctx context.Context, s *store.Store, root string) (int, error) {
+	paths, err := s.ListPaths(ctx, "")
 	if err != nil {
 		return 0, err
 	}
@@ -392,7 +401,7 @@ func pruneMissing(s *store.Store, root string) (int, error) {
 		return 0, nil
 	}
 
-	return s.DeleteFiles(missing)
+	return s.DeleteFiles(ctx, missing)
 }
 
 // chunkTexts извлекает текст из каждого чанка - embedAll работает с текстом,

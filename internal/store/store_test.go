@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,12 +25,12 @@ func chunksOf(texts ...string) []chunk.Chunk {
 func mustOpenInit(t *testing.T, model string, dim int) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "index.db")
-	s, err := Open(path)
+	s, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.Init(model, dim, "/root"); err != nil {
+	if err := s.Init(context.Background(), model, dim, "/root"); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -38,7 +39,7 @@ func mustOpenInit(t *testing.T, model string, dim int) *Store {
 func TestInitCreatesSchemaAndIsIdempotent(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	model, dim, err := s.Meta()
+	model, dim, err := s.Meta(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,21 +48,21 @@ func TestInitCreatesSchemaAndIsIdempotent(t *testing.T) {
 	}
 
 	// Повторный Init с той же моделью должен пройти без ошибок.
-	if err := s.Init("bge-m3", testDim, "/root"); err != nil {
+	if err := s.Init(context.Background(), "bge-m3", testDim, "/root"); err != nil {
 		t.Fatalf("повторный Init с той же моделью вернул ошибку: %v", err)
 	}
 }
 
 func TestCheckSchemaFreshStoreIsNil(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "index.db")
-	s, err := Open(path)
+	s, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
 
 	// Схема ещё не создана (Init не вызывался) - проверять нечего.
-	if err := s.CheckSchema(); err != nil {
+	if err := s.CheckSchema(context.Background()); err != nil {
 		t.Fatalf("CheckSchema() на свежем хранилище вернул ошибку: %v", err)
 	}
 }
@@ -69,11 +70,11 @@ func TestCheckSchemaFreshStoreIsNil(t *testing.T) {
 func TestCheckSchemaRejectsOldVersion(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.SetMeta("schema_version", "1"); err != nil {
+	if err := s.SetMeta(context.Background(), "schema_version", "1"); err != nil {
 		t.Fatal(err)
 	}
 
-	err := s.CheckSchema()
+	err := s.CheckSchema(context.Background())
 	if err == nil {
 		t.Fatal("ожидалась ошибка при несовпадении версии схемы")
 	}
@@ -85,7 +86,7 @@ func TestCheckSchemaRejectsOldVersion(t *testing.T) {
 func TestInitRejectsDifferentModel(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	err := s.Init("other-model", testDim, "/root")
+	err := s.Init(context.Background(), "other-model", testDim, "/root")
 	if err == nil {
 		t.Fatal("ожидалась ошибка при Init с другой моделью")
 	}
@@ -94,17 +95,17 @@ func TestInitRejectsDifferentModel(t *testing.T) {
 func TestReplaceFileAndSearch(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunksOf("chunk a"), [][]float32{{1, 0, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunksOf("chunk a"), [][]float32{{1, 0, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/b.txt", 1, 10, "hashB", chunksOf("chunk b"), [][]float32{{0.9, 0.1, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/b.txt", 1, 10, "hashB", chunksOf("chunk b"), [][]float32{{0.9, 0.1, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/c.txt", 1, 10, "hashC", chunksOf("chunk c"), [][]float32{{0, 1, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/c.txt", 1, 10, "hashC", chunksOf("chunk c"), [][]float32{{0, 1, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.Search([]float32{1, 0, 0, 0}, 3)
+	results, err := s.Search(context.Background(), []float32{1, 0, 0, 0}, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,10 +129,10 @@ func TestReplaceFileAndSearch(t *testing.T) {
 func TestReplaceFileReplacesNotDuplicates(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hash1", chunksOf("one", "two"), [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hash1", chunksOf("one", "two"), [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/a.txt", 2, 20, "hash2", chunksOf("three"), [][]float32{{0, 0, 1, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 2, 20, "hash2", chunksOf("three"), [][]float32{{0, 0, 1, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +157,7 @@ func TestReplaceFileReplacesNotDuplicates(t *testing.T) {
 		t.Errorf("vec_chunks count = %d, ожидалось 1", vecCount)
 	}
 
-	mtime, size, hash, found, err := s.FileState("/root/a.txt")
+	mtime, size, hash, found, err := s.FileState(context.Background(), "/root/a.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestReplaceFileReplacesNotDuplicates(t *testing.T) {
 func TestFileState(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	_, _, _, found, err := s.FileState("/root/unknown.txt")
+	_, _, _, found, err := s.FileState(context.Background(), "/root/unknown.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,11 +177,11 @@ func TestFileState(t *testing.T) {
 		t.Error("FileState для неизвестного пути вернул found=true")
 	}
 
-	if err := s.ReplaceFile("/root/a.txt", 42, 100, "abc", chunksOf("chunk"), [][]float32{{1, 0, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 42, 100, "abc", chunksOf("chunk"), [][]float32{{1, 0, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
-	mtime, size, hash, found, err := s.FileState("/root/a.txt")
+	mtime, size, hash, found, err := s.FileState(context.Background(), "/root/a.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,12 +199,12 @@ func TestDeleteSubtree(t *testing.T) {
 		"/c/z.txt":   {0, 0, 1, 0},
 	}
 	for path, vec := range files {
-		if err := s.ReplaceFile(path, 1, 1, "h", chunksOf("text"), [][]float32{vec}); err != nil {
+		if err := s.ReplaceFile(context.Background(), path, 1, 1, "h", chunksOf("text"), [][]float32{vec}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	n, err := s.DeleteSubtree("/a")
+	n, err := s.DeleteSubtree(context.Background(), "/a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +212,7 @@ func TestDeleteSubtree(t *testing.T) {
 		t.Fatalf("DeleteSubtree удалил %d файлов, ожидалось 2", n)
 	}
 
-	paths, err := s.ListPaths("")
+	paths, err := s.ListPaths(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,14 +235,14 @@ func TestDeleteSubtree(t *testing.T) {
 func TestStats(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.ReplaceFile("/root/a.txt", 1, 1, "h1", chunksOf("one", "two"), [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 1, "h1", chunksOf("one", "two"), [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/b.txt", 1, 1, "h2", chunksOf("three"), [][]float32{{0, 0, 1, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/b.txt", 1, 1, "h2", chunksOf("three"), [][]float32{{0, 0, 1, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
-	st, err := s.Stats()
+	st, err := s.Stats(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +260,7 @@ func TestStats(t *testing.T) {
 func TestInitLexicalOnly(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	has, err := s.HasVectors()
+	has, err := s.HasVectors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +280,7 @@ func TestInitLexicalOnly(t *testing.T) {
 func TestSetMetaGetMeta(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	v, err := s.GetMeta("query_prefix")
+	v, err := s.GetMeta(context.Background(), "query_prefix")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,10 +288,10 @@ func TestSetMetaGetMeta(t *testing.T) {
 		t.Errorf("GetMeta для отсутствующего ключа = %q, ожидалась пустая строка", v)
 	}
 
-	if err := s.SetMeta("query_prefix", "query: "); err != nil {
+	if err := s.SetMeta(context.Background(), "query_prefix", "query: "); err != nil {
 		t.Fatal(err)
 	}
-	v, err = s.GetMeta("query_prefix")
+	v, err = s.GetMeta(context.Background(), "query_prefix")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,10 +300,10 @@ func TestSetMetaGetMeta(t *testing.T) {
 	}
 
 	// Повторный SetMeta с тем же ключом должен перезаписать значение.
-	if err := s.SetMeta("query_prefix", "новый префикс"); err != nil {
+	if err := s.SetMeta(context.Background(), "query_prefix", "новый префикс"); err != nil {
 		t.Fatal(err)
 	}
-	v, err = s.GetMeta("query_prefix")
+	v, err = s.GetMeta(context.Background(), "query_prefix")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,14 +315,14 @@ func TestSetMetaGetMeta(t *testing.T) {
 func TestEnsureVectorsIdempotent(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := ensureVectorsExec(s.db, 8); err != nil {
+	if err := ensureVectorsExec(context.Background(), s.db, 8); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureVectorsExec(s.db, 8); err != nil {
+	if err := ensureVectorsExec(context.Background(), s.db, 8); err != nil {
 		t.Fatalf("повторный ensureVectorsExec вернул ошибку: %v", err)
 	}
 
-	has, err := s.HasVectors()
+	has, err := s.HasVectors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,11 +334,11 @@ func TestEnsureVectorsIdempotent(t *testing.T) {
 func TestReplaceFileWithoutVectors(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunksOf("chunk a"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunksOf("chunk a"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	has, err := s.HasVectors()
+	has, err := s.HasVectors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +346,7 @@ func TestReplaceFileWithoutVectors(t *testing.T) {
 		t.Error("HasVectors() = true после ReplaceFile без векторов, ожидалось false")
 	}
 
-	mtime, size, hash, found, err := s.FileState("/root/a.txt")
+	mtime, size, hash, found, err := s.FileState(context.Background(), "/root/a.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +371,7 @@ func TestReplaceFilePopulatesFTS(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
 	chunks := chunksOf("локальный поиск по файлам", "второй чанк про индекс")
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hash1", chunks, [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hash1", chunks, [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -390,10 +391,10 @@ func TestReplaceFilePopulatesFTS(t *testing.T) {
 func TestReplaceFileReindexUpdatesFTS(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hash1", chunksOf("локальный поиск по файлам"), [][]float32{{1, 0, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hash1", chunksOf("локальный поиск по файлам"), [][]float32{{1, 0, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/a.txt", 2, 20, "hash2", chunksOf("новое содержимое документа", "ещё один чанк"), [][]float32{{0, 1, 0, 0}, {0, 0, 1, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 2, 20, "hash2", chunksOf("новое содержимое документа", "ещё один чанк"), [][]float32{{0, 1, 0, 0}, {0, 0, 1, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -416,11 +417,11 @@ func TestReplaceFileReindexUpdatesFTS(t *testing.T) {
 func TestDeleteSubtreeCleansFTS(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.ReplaceFile("/a/x.txt", 1, 1, "h", chunksOf("локальный поиск"), [][]float32{{1, 0, 0, 0}}); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/a/x.txt", 1, 1, "h", chunksOf("локальный поиск"), [][]float32{{1, 0, 0, 0}}); err != nil {
 		t.Fatal(err)
 	}
 
-	n, err := s.DeleteSubtree("/a")
+	n, err := s.DeleteSubtree(context.Background(), "/a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,11 +441,11 @@ func TestDeleteSubtreeCleansFTS(t *testing.T) {
 func TestDeleteSubtreeWithoutVectorsTable(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/a/x.txt", 1, 1, "h", chunksOf("чанк без векторов"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/a/x.txt", 1, 1, "h", chunksOf("чанк без векторов"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	has, err := s.HasVectors()
+	has, err := s.HasVectors(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +453,7 @@ func TestDeleteSubtreeWithoutVectorsTable(t *testing.T) {
 		t.Fatal("HasVectors() = true, ожидалось false для чисто лексической базы")
 	}
 
-	n, err := s.DeleteSubtree("/a")
+	n, err := s.DeleteSubtree(context.Background(), "/a")
 	if err != nil {
 		t.Fatalf("DeleteSubtree на базе без vec_chunks вернул ошибку: %v", err)
 	}
@@ -469,13 +470,13 @@ func TestSearchLexical(t *testing.T) {
 		"векторное представление документа",
 		"the quick brown fox jumps",
 	)
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunks, nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunks, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	assertFindsChunk := func(t *testing.T, query string) {
 		t.Helper()
-		results, err := s.SearchLexical(query, 10)
+		results, err := s.SearchLexical(context.Background(), query, 10)
 		if err != nil {
 			t.Fatalf("SearchLexical(%q) вернул ошибку: %v", query, err)
 		}
@@ -510,7 +511,7 @@ func TestSearchLexical(t *testing.T) {
 	})
 
 	t.Run("спецсимволы не приводят к ошибке", func(t *testing.T) {
-		results, err := s.SearchLexical("поиск (файлам)", 10)
+		results, err := s.SearchLexical(context.Background(), "поиск (файлам)", 10)
 		if err != nil {
 			t.Fatalf("SearchLexical со спецсимволами вернул ошибку: %v", err)
 		}
@@ -520,7 +521,7 @@ func TestSearchLexical(t *testing.T) {
 	})
 
 	t.Run("ничего не найдено", func(t *testing.T) {
-		results, err := s.SearchLexical("несуществующееслово", 10)
+		results, err := s.SearchLexical(context.Background(), "несуществующееслово", 10)
 		if err != nil {
 			t.Fatalf("SearchLexical вернул ошибку: %v", err)
 		}
@@ -533,11 +534,11 @@ func TestSearchLexical(t *testing.T) {
 		// Добавляем ещё чанки со словом "поиск", чтобы запрос находил
 		// несколько результатов и можно было проверить действие LIMIT.
 		more := chunksOf("поиск второй раз", "поиск третий раз")
-		if err := s.ReplaceFile("/root/b.txt", 1, 10, "hashB", more, nil); err != nil {
+		if err := s.ReplaceFile(context.Background(), "/root/b.txt", 1, 10, "hashB", more, nil); err != nil {
 			t.Fatal(err)
 		}
 
-		results, err := s.SearchLexical("поиск", 1)
+		results, err := s.SearchLexical(context.Background(), "поиск", 1)
 		if err != nil {
 			t.Fatalf("SearchLexical вернул ошибку: %v", err)
 		}
@@ -554,11 +555,11 @@ func TestSearchLexicalStemsWordForms(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
 	chunks := chunksOf("Локальный поиск по файлам проекта")
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunks, nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunks, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical("файл", 10)
+	results, err := s.SearchLexical(context.Background(), "файл", 10)
 	if err != nil {
 		t.Fatalf("SearchLexical вернул ошибку: %v", err)
 	}
@@ -578,14 +579,14 @@ func TestSearchLexicalPhrase(t *testing.T) {
 
 	match := "Поиском файлов занимается индексатор"
 	other := "Локальный поиск по файлам проекта"
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunksOf(match), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunksOf(match), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/b.txt", 1, 10, "hashB", chunksOf(other), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/b.txt", 1, 10, "hashB", chunksOf(other), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical(`"поиск файлов"`, 10)
+	results, err := s.SearchLexical(context.Background(), `"поиск файлов"`, 10)
 	if err != nil {
 		t.Fatalf("SearchLexical вернул ошибку: %v", err)
 	}
@@ -602,11 +603,11 @@ func TestSearchLexicalPhrase(t *testing.T) {
 func TestSearchLexicalPunctuationOnly(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunksOf("какой-то текст"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunksOf("какой-то текст"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical("!!!", 10)
+	results, err := s.SearchLexical(context.Background(), "!!!", 10)
 	if err != nil {
 		t.Fatalf("SearchLexical(\"!!!\") вернул ошибку: %v", err)
 	}
@@ -621,12 +622,12 @@ func TestRemoveRootDropsCoveredRoots(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
 	for _, r := range []string{"/work/docs", "/work/config", "/work/config/nested"} {
-		if err := s.AddRoot(r); err != nil {
+		if err := s.AddRoot(context.Background(), r); err != nil {
 			t.Fatalf("AddRoot(%q): %v", r, err)
 		}
 	}
 
-	changed, err := s.RemoveRoot("/work/config")
+	changed, err := s.RemoveRoot(context.Background(), "/work/config")
 	if err != nil {
 		t.Fatalf("RemoveRoot: %v", err)
 	}
@@ -634,7 +635,7 @@ func TestRemoveRootDropsCoveredRoots(t *testing.T) {
 		t.Fatal("RemoveRoot вернул changed=false, хотя корень был в списке")
 	}
 
-	roots, err := s.Roots()
+	roots, err := s.Roots(context.Background())
 	if err != nil {
 		t.Fatalf("Roots: %v", err)
 	}
@@ -654,11 +655,11 @@ func TestRemoveRootDropsCoveredRoots(t *testing.T) {
 func TestRemoveRootKeepsAncestor(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.AddRoot("/work/docs"); err != nil {
+	if err := s.AddRoot(context.Background(), "/work/docs"); err != nil {
 		t.Fatalf("AddRoot: %v", err)
 	}
 
-	changed, err := s.RemoveRoot("/work/docs/orders")
+	changed, err := s.RemoveRoot(context.Background(), "/work/docs/orders")
 	if err != nil {
 		t.Fatalf("RemoveRoot: %v", err)
 	}
@@ -666,7 +667,7 @@ func TestRemoveRootKeepsAncestor(t *testing.T) {
 		t.Error("RemoveRoot вернул changed=true для подкаталога корня")
 	}
 
-	roots, err := s.Roots()
+	roots, err := s.Roots(context.Background())
 	if err != nil {
 		t.Fatalf("Roots: %v", err)
 	}
@@ -694,11 +695,11 @@ func TestSearchLexicalReturnsLineRange(t *testing.T) {
 		{Text: "первый чанк без совпадения", StartLine: 1, EndLine: 3},
 		{Text: "локальный поиск по файлам", StartLine: 4, EndLine: 9},
 	}
-	if err := s.ReplaceFile("/root/a.txt", 1, 10, "hashA", chunks, nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 10, "hashA", chunks, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical("поиск", 10)
+	results, err := s.SearchLexical(context.Background(), "поиск", 10)
 	if err != nil {
 		t.Fatalf("SearchLexical вернул ошибку: %v", err)
 	}
@@ -715,16 +716,16 @@ func TestSearchLexicalReturnsLineRange(t *testing.T) {
 func TestSearchLexicalByPath(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/internal/store/migrations.sql", 1, 10, "hashA",
+	if err := s.ReplaceFile(context.Background(), "/root/internal/store/migrations.sql", 1, 10, "hashA",
 		chunksOf("создание таблиц"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/README.md", 1, 10, "hashB",
+	if err := s.ReplaceFile(context.Background(), "/root/README.md", 1, 10, "hashB",
 		chunksOf("описание проекта"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical("migrations", 10)
+	results, err := s.SearchLexical(context.Background(), "migrations", 10)
 	if err != nil {
 		t.Fatalf("SearchLexical вернул ошибку: %v", err)
 	}
@@ -742,13 +743,13 @@ func TestSearchLexicalByIdentifierParts(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
 	text := "func (s *Store) ReplaceFile(path string) error"
-	if err := s.ReplaceFile("/root/a.go", 1, 10, "hashA", chunksOf(text), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.go", 1, 10, "hashA", chunksOf(text), nil); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, query := range []string{"ReplaceFile", "replace_file", "replace file"} {
 		t.Run(query, func(t *testing.T) {
-			results, err := s.SearchLexical(query, 10)
+			results, err := s.SearchLexical(context.Background(), query, 10)
 			if err != nil {
 				t.Fatalf("SearchLexical вернул ошибку: %v", err)
 			}
@@ -764,16 +765,16 @@ func TestSearchLexicalByIdentifierParts(t *testing.T) {
 func TestSearchLexicalBodyOutranksPath(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/notes.txt", 1, 10, "hashA",
+	if err := s.ReplaceFile(context.Background(), "/root/notes.txt", 1, 10, "hashA",
 		chunksOf("здесь описан индексатор и его устройство"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/индексатор/readme.txt", 1, 10, "hashB",
+	if err := s.ReplaceFile(context.Background(), "/root/индексатор/readme.txt", 1, 10, "hashB",
 		chunksOf("посторонний текст"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical("индексатор", 10)
+	results, err := s.SearchLexical(context.Background(), "индексатор", 10)
 	if err != nil {
 		t.Fatalf("SearchLexical вернул ошибку: %v", err)
 	}
@@ -791,12 +792,12 @@ func TestSearchLexicalBodyOutranksPath(t *testing.T) {
 func TestSearchLexicalPhraseIgnoresPath(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/отчет.txt", 1, 10, "hashA",
+	if err := s.ReplaceFile(context.Background(), "/root/отчет.txt", 1, 10, "hashA",
 		chunksOf("продажи выросли"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	results, err := s.SearchLexical(`"отчет продажи"`, 10)
+	results, err := s.SearchLexical(context.Background(), `"отчет продажи"`, 10)
 	if err != nil {
 		t.Fatalf("SearchLexical вернул ошибку: %v", err)
 	}
@@ -811,12 +812,12 @@ func TestSearchLexicalPhraseIgnoresPath(t *testing.T) {
 func TestChunksRange(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/doc.txt", 1, 10, "hash",
+	if err := s.ReplaceFile(context.Background(), "/root/doc.txt", 1, 10, "hash",
 		chunksOf("chunk 0", "chunk 1", "chunk 2", "chunk 3", "chunk 4"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := s.Chunks("/root/doc.txt", 1, 3)
+	got, err := s.Chunks(context.Background(), "/root/doc.txt", 1, 3)
 	if err != nil {
 		t.Fatalf("Chunks вернул ошибку: %v", err)
 	}
@@ -838,11 +839,11 @@ func TestChunksRange(t *testing.T) {
 func TestChunksOutOfRangeIsNotAnError(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/doc.txt", 1, 10, "hash", chunksOf("chunk 0", "chunk 1"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/doc.txt", 1, 10, "hash", chunksOf("chunk 0", "chunk 1"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := s.Chunks("/root/doc.txt", -5, 100)
+	got, err := s.Chunks(context.Background(), "/root/doc.txt", -5, 100)
 	if err != nil {
 		t.Fatalf("Chunks вернул ошибку: %v", err)
 	}
@@ -850,7 +851,7 @@ func TestChunksOutOfRangeIsNotAnError(t *testing.T) {
 		t.Fatalf("Chunks вернул %d чанков, ожидалось 2 (весь файл)", len(got))
 	}
 
-	got, err = s.Chunks("/root/doc.txt", 5, 10)
+	got, err = s.Chunks(context.Background(), "/root/doc.txt", 5, 10)
 	if err != nil {
 		t.Fatalf("Chunks вернул ошибку: %v", err)
 	}
@@ -864,11 +865,11 @@ func TestChunksOutOfRangeIsNotAnError(t *testing.T) {
 func TestChunksLineRange(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/doc.txt", 1, 10, "hash", chunksOf("a", "b"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/doc.txt", 1, 10, "hash", chunksOf("a", "b"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := s.Chunks("/root/doc.txt", 0, 1)
+	got, err := s.Chunks(context.Background(), "/root/doc.txt", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -885,7 +886,7 @@ func TestChunksLineRange(t *testing.T) {
 func TestChunksUnknownFile(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	_, err := s.Chunks("/root/missing.txt", 0, 10)
+	_, err := s.Chunks(context.Background(), "/root/missing.txt", 0, 10)
 	if err == nil {
 		t.Fatal("Chunks(несуществующий файл) не вернул ошибку")
 	}
@@ -894,17 +895,17 @@ func TestChunksUnknownFile(t *testing.T) {
 func TestFileStatesReturnsSavedMetadata(t *testing.T) {
 	s := mustOpenInit(t, "", 0)
 
-	if err := s.ReplaceFile("/root/a.txt", 111, 5, "h1", chunksOf("alpha"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 111, 5, "h1", chunksOf("alpha"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/sub/b.txt", 222, 7, "h2", chunksOf("beta"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/sub/b.txt", 222, 7, "h2", chunksOf("beta"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/other/c.txt", 333, 9, "h3", chunksOf("gamma"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/other/c.txt", 333, 9, "h3", chunksOf("gamma"), nil); err != nil {
 		t.Fatal(err)
 	}
 
-	all, err := s.FileStates("")
+	all, err := s.FileStates(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -917,7 +918,7 @@ func TestFileStatesReturnsSavedMetadata(t *testing.T) {
 	}
 
 	// Поддерево ограничивает выборку по границам сегментов пути.
-	sub, err := s.FileStates("/root")
+	sub, err := s.FileStates(context.Background(), "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -931,44 +932,44 @@ func TestFileStatesReturnsSavedMetadata(t *testing.T) {
 
 func TestOpenReadOnlyRejectsWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "index.db")
-	s, err := Open(path)
+	s, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Init("", 0, "/root"); err != nil {
+	if err := s.Init(context.Background(), "", 0, "/root"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceFile("/root/a.txt", 1, 1, "h", chunksOf("alpha"), nil); err != nil {
+	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 1, "h", chunksOf("alpha"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	ro, err := OpenReadOnly(path)
+	ro, err := OpenReadOnly(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ro.Close()
 
-	if err := ro.CheckSchema(); err != nil {
+	if err := ro.CheckSchema(context.Background()); err != nil {
 		t.Errorf("CheckSchema on a read-only store: %v", err)
 	}
-	states, err := ro.FileStates("")
+	states, err := ro.FileStates(context.Background(), "")
 	if err != nil {
 		t.Fatalf("FileStates on a read-only store: %v", err)
 	}
 	if len(states) != 1 {
 		t.Errorf("FileStates returned %d files, want 1", len(states))
 	}
-	if _, err := ro.DeleteFiles([]string{"/root/a.txt"}); err == nil {
+	if _, err := ro.DeleteFiles(context.Background(), []string{"/root/a.txt"}); err == nil {
 		t.Error("a read-only store must reject writes")
 	}
 }
 
 func TestOpenReadOnlyMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nope.db")
-	s, err := OpenReadOnly(path)
+	s, err := OpenReadOnly(context.Background(), path)
 	if err == nil {
 		s.Close()
 		t.Fatal("OpenReadOnly must fail when the database file does not exist")
@@ -982,12 +983,12 @@ func TestSubtreeLikeMetacharsAreLiteral(t *testing.T) {
 	// если бы шаблон поддерева не экранировался.
 	paths := []string{"/r/a_b/f.txt", "/r/axb/f.txt", "/r/a%b/f.txt", "/r/aXb/f.txt"}
 	for _, p := range paths {
-		if err := s.ReplaceFile(p, 1, 1, "h", chunksOf("text"), nil); err != nil {
+		if err := s.ReplaceFile(context.Background(), p, 1, 1, "h", chunksOf("text"), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	got, err := s.ListPaths("/r/a_b")
+	got, err := s.ListPaths(context.Background(), "/r/a_b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -995,7 +996,7 @@ func TestSubtreeLikeMetacharsAreLiteral(t *testing.T) {
 		t.Fatalf("ListPaths(/r/a_b) = %v, ожидалось [/r/a_b/f.txt]", got)
 	}
 
-	states, err := s.FileStates("/r/a%b")
+	states, err := s.FileStates(context.Background(), "/r/a%b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1006,14 +1007,14 @@ func TestSubtreeLikeMetacharsAreLiteral(t *testing.T) {
 		t.Fatalf("FileStates(/r/a%%b) не содержит /r/a%%b/f.txt: %v", states)
 	}
 
-	n, err := s.DeleteSubtree("/r/a_b")
+	n, err := s.DeleteSubtree(context.Background(), "/r/a_b")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("DeleteSubtree(/r/a_b) удалил %d файлов, ожидался 1", n)
 	}
-	rest, err := s.ListPaths("")
+	rest, err := s.ListPaths(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1025,10 +1026,10 @@ func TestSubtreeLikeMetacharsAreLiteral(t *testing.T) {
 func TestMetaRejectsGarbageDim(t *testing.T) {
 	s := mustOpenInit(t, "bge-m3", testDim)
 
-	if err := s.SetMeta("dim", "10garbage"); err != nil {
+	if err := s.SetMeta(context.Background(), "dim", "10garbage"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.Meta(); err == nil {
+	if _, _, err := s.Meta(context.Background()); err == nil {
 		t.Fatal("Meta() не вернул ошибку для dim=10garbage")
 	}
 }

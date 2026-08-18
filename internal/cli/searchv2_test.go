@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -132,7 +133,7 @@ func TestBuildSearchFiltersV2ReportsAppliedFilters(t *testing.T) {
 
 func TestBuildSearchResponseV2FillsRankRefAndTruncation(t *testing.T) {
 	dbPath, filePath := mustBuildShowIndex(t)
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestBuildSearchResponseV2FillsRankRefAndTruncation(t *testing.T) {
 	}
 	opts := searchOptions{Query: "chunk", K: 2, Snippet: 5}
 
-	resp, err := buildSearchResponseV2(s, results, opts, nil)
+	resp, err := buildSearchResponseV2(context.Background(), s, results, opts, nil)
 	if err != nil {
 		t.Fatalf("buildSearchResponseV2 вернул ошибку: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestBuildSearchResponseV2WarnsOncePerChangedFile(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte("stub changed on disk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestBuildSearchResponseV2WarnsOncePerChangedFile(t *testing.T) {
 		{Path: filePath, Seq: 1, Text: "chunk text 1"},
 	}
 
-	resp, err := buildSearchResponseV2(s, results, searchOptions{Query: "chunk", K: 2}, nil)
+	resp, err := buildSearchResponseV2(context.Background(), s, results, searchOptions{Query: "chunk", K: 2}, nil)
 	if err != nil {
 		t.Fatalf("buildSearchResponseV2 вернул ошибку: %v", err)
 	}
@@ -212,13 +213,13 @@ func TestBuildSearchResponseV2WarnsOnMissingFile(t *testing.T) {
 	if err := os.Remove(filePath); err != nil {
 		t.Fatal(err)
 	}
-	s, err := store.Open(dbPath)
+	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 
-	resp, err := buildSearchResponseV2(s, []store.Result{{Path: filePath, Text: "chunk text 0"}}, searchOptions{K: 1}, nil)
+	resp, err := buildSearchResponseV2(context.Background(), s, []store.Result{{Path: filePath, Text: "chunk text 0"}}, searchOptions{K: 1}, nil)
 	if err != nil {
 		t.Fatalf("buildSearchResponseV2 вернул ошибку: %v", err)
 	}

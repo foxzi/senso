@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -334,7 +335,7 @@ func TestRunCheckReportsExcludeReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dbpath.Find: %v", err)
 	}
-	s, err := store.OpenReadOnly(dbPath)
+	s, err := store.OpenReadOnly(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
@@ -345,7 +346,7 @@ func TestRunCheckReportsExcludeReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := newCheckReport()
-	if err := compareTree(root, opts, s, rep); err != nil {
+	if err := compareTree(context.Background(), root, opts, s, rep); err != nil {
 		t.Fatalf("compareTree: %v", err)
 	}
 

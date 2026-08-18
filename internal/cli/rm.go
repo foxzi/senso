@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ func rmFlagSet(opts *rmOptions) *flag.FlagSet {
 // RunRm реализует подкоманду "rm": удаляет из индекса файл или всё
 // поддерево по указанному пути. Файлы на диске не затрагиваются.
 func RunRm(args []string) error {
+	ctx := context.Background()
+
 	var opts rmOptions
 	fs := rmFlagSet(&opts)
 	fs.Usage = func() {
@@ -46,13 +49,13 @@ func RunRm(args []string) error {
 		return err
 	}
 
-	s, _, err := openStore(opts.DB)
+	s, _, err := openStore(ctx, opts.DB)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	n, err := s.DeleteSubtree(target)
+	n, err := s.DeleteSubtree(ctx, target)
 	if err != nil {
 		return err
 	}
@@ -60,7 +63,7 @@ func RunRm(args []string) error {
 	// Если удалённый путь покрывал целый зарегистрированный корень, этот
 	// корень больше ничего не описывает - убираем его из meta.roots, чтобы
 	// список не зарастал записями без единого файла.
-	if _, err := s.RemoveRoot(target); err != nil {
+	if _, err := s.RemoveRoot(ctx, target); err != nil {
 		return err
 	}
 

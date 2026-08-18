@@ -131,12 +131,14 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 // лексический поиск (без обращения к Ollama); с флагом --semantic - поиск
 // по векторам.
 func RunSearch(args []string) error {
+	ctx := context.Background()
+
 	opts, err := parseSearchArgs(args)
 	if err != nil {
 		return err
 	}
 
-	err = runSearch(opts)
+	err = runSearch(ctx, opts)
 	if err != nil && opts.outputFormat() == formatJSONV2 {
 		// В машинном формате и ошибка машинная: агент читает stdout и
 		// получает стабильный код, а не разбирает текст из stderr.
@@ -148,14 +150,14 @@ func RunSearch(args []string) error {
 }
 
 // runSearch выполняет поиск и печатает результат в выбранном формате.
-func runSearch(opts searchOptions) error {
-	s, _, err := openStore(opts.DB)
+func runSearch(ctx context.Context, opts searchOptions) error {
+	s, _, err := openStore(ctx, opts.DB)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 
-	roots, err := s.Roots()
+	roots, err := s.Roots(ctx)
 	if err != nil {
 		return err
 	}
@@ -164,7 +166,7 @@ func runSearch(opts searchOptions) error {
 		return err
 	}
 
-	results, err := runSearchQuery(s, opts, filter)
+	results, err := runSearchQuery(ctx, s, opts, filter)
 	if err != nil {
 		return err
 	}
@@ -176,14 +178,14 @@ func runSearch(opts searchOptions) error {
 	// форматам они печатаются в stderr.
 	format := opts.outputFormat()
 	if format != formatJSONV2 {
-		if err := warnStaleResults(s, results); err != nil {
+		if err := warnStaleResults(ctx, s, results); err != nil {
 			return err
 		}
 	}
 
 	switch format {
 	case formatJSONV2:
-		return printSearchJSONV2(s, results, opts, filter)
+		return printSearchJSONV2(ctx, s, results, opts, filter)
 	case formatJSON:
 		return printSearchJSON(results, opts.Query, opts.Snippet)
 	case formatPaths:
@@ -269,18 +271,18 @@ func filterResults(results []store.Result, filter *resultFilter) []store.Result 
 // --max-per-file (см. postProcessResults в searchdedup.go). Гибридный режим
 // фильтрует список каждого источника до fuseRRF (см. searchHybrid), поэтому
 // здесь для него повторная фильтрация не нужна.
-func runSearchQuery(s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
+func runSearchQuery(ctx context.Context, s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
 	if opts.Hybrid {
-		return searchHybrid(s, opts, filter)
+		return searchHybrid(ctx, s, opts, filter)
 	}
 
 	pool := searchPoolSize(opts.K, needsExpandedPool(filter, opts))
 	var results []store.Result
 	var err error
 	if opts.Semantic {
-		results, err = searchSemantic(s, opts, pool)
+		results, err = searchSemantic(ctx, s, opts, pool)
 	} else {
-		results, err = s.SearchLexical(opts.Query, pool)
+		results, err = s.SearchLexical(ctx, opts.Query, pool)
 	}
 	if err != nil {
 		return nil, err
@@ -292,8 +294,8 @@ func runSearchQuery(s *store.Store, opts searchOptions, filter *resultFilter) ([
 // базе, получает эмбеддинг запроса от Ollama и вызывает store.Search.
 // k - число результатов, которое надо получить (для обычного семантического
 // поиска это opts.K, для гибридного - расширенный пул кандидатов).
-func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, error) {
-	hasVectors, err := s.HasVectors()
+func searchSemantic(ctx context.Context, s *store.Store, opts searchOptions, k int) ([]store.Result, error) {
+	hasVectors, err := s.HasVectors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -301,14 +303,14 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 		return nil, withCode(errCodeNoVectors, errors.New(i18n.T("no vectors in the database: run \"senso index --embed\" to build them", "в базе нет векторов: запустите \"senso index --embed\" для их построения")))
 	}
 
-	model, _, err := s.Meta()
+	model, _, err := s.Meta(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	queryPrefix := opts.QueryPrefix
 	if queryPrefix == "" {
-		queryPrefix, err = s.GetMeta("query_prefix")
+		queryPrefix, err = s.GetMeta(ctx, "query_prefix")
 		if err != nil {
 			return nil, err
 		}
@@ -326,7 +328,7 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 	vector := vectors[0]
 	embed.Normalize(vector)
 
-	return s.Search(vector, k)
+	return s.Search(ctx, vector, k)
 }
 
 // searchHybrid объединяет лексический и семантический поиск с помощью
@@ -339,7 +341,7 @@ func searchSemantic(s *store.Store, opts searchOptions, k int) ([]store.Result, 
 // случае будут отброшены. fuseRRF вызывается с тем же пулом, а не с opts.K,
 // чтобы дедуп и --max-per-file применялись до финального отбора top-K
 // (см. postProcessResults) и не срезали результаты раньше времени.
-func searchHybrid(s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
+func searchHybrid(ctx context.Context, s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
 	pool := opts.K * 4
 	if pool < 50 {
 		pool = 50
@@ -348,11 +350,11 @@ func searchHybrid(s *store.Store, opts searchOptions, filter *resultFilter) ([]s
 		pool = fp
 	}
 
-	lexical, err := s.SearchLexical(opts.Query, pool)
+	lexical, err := s.SearchLexical(ctx, opts.Query, pool)
 	if err != nil {
 		return nil, err
 	}
-	semantic, err := searchSemantic(s, opts, pool)
+	semantic, err := searchSemantic(ctx, s, opts, pool)
 	if err != nil {
 		return nil, err
 	}
@@ -446,10 +448,10 @@ type staleResultFile struct {
 // уникальный путь, в порядке первого появления пути в results. Проверяются
 // только попавшие в выдачу файлы, а не весь индекс - поиск не должен
 // платить обходом дерева за диагностику.
-func staleResultPaths(s *store.Store, results []store.Result) ([]staleResultFile, error) {
+func staleResultPaths(ctx context.Context, s *store.Store, results []store.Result) ([]staleResultFile, error) {
 	var stale []staleResultFile
 	for _, path := range uniquePaths(results) {
-		outdated, reason, err := checkStale(path, s)
+		outdated, reason, err := checkStale(ctx, path, s)
 		if err != nil {
 			return nil, err
 		}
@@ -469,8 +471,8 @@ func staleResultPaths(s *store.Store, results []store.Result) ([]staleResultFile
 // вывода: json остаётся валидным, а paths - списком путей. Код выхода не
 // меняется - решение о переиндексации принимает senso index, а найденный
 // текст остаётся полезным и в устаревшем виде.
-func warnStaleResults(s *store.Store, results []store.Result) error {
-	stale, err := staleResultPaths(s, results)
+func warnStaleResults(ctx context.Context, s *store.Store, results []store.Result) error {
+	stale, err := staleResultPaths(ctx, s, results)
 	if err != nil {
 		return err
 	}
