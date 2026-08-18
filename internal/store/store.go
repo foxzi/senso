@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -230,7 +231,7 @@ func (s *Store) Meta() (model string, dim int, err error) {
 	if err = s.db.QueryRow(`SELECT value FROM meta WHERE key='dim'`).Scan(&dimStr); err != nil {
 		return "", 0, fmt.Errorf(i18n.T("store: read meta.dim: %w", "store: чтение meta.dim: %w"), err)
 	}
-	if _, err = fmt.Sscanf(dimStr, "%d", &dim); err != nil {
+	if dim, err = strconv.Atoi(dimStr); err != nil {
 		return "", 0, fmt.Errorf(i18n.T("store: parse meta.dim=%q: %w", "store: разбор meta.dim=%q: %w"), dimStr, err)
 	}
 	return model, dim, nil

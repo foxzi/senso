@@ -1021,3 +1021,14 @@ func TestSubtreeLikeMetacharsAreLiteral(t *testing.T) {
 		t.Fatalf("после DeleteSubtree осталось %d файлов, ожидалось 3: %v", len(rest), rest)
 	}
 }
+
+func TestMetaRejectsGarbageDim(t *testing.T) {
+	s := mustOpenInit(t, "bge-m3", testDim)
+
+	if err := s.SetMeta("dim", "10garbage"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Meta(); err == nil {
+		t.Fatal("Meta() не вернул ошибку для dim=10garbage")
+	}
+}
