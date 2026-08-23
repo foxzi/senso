@@ -121,14 +121,20 @@ const (
 	// statusExcluded - файл есть и в индексе, и на диске, но текущие
 	// правила отбора его больше не пропускают.
 	statusExcluded = "excluded"
+	// statusSkipped - файла нет в индексе, но index его и не взял бы:
+	// содержимое бинарное, пустое или больше --max-file-size. Такой файл
+	// не признак устаревшего индекса, иначе check вечно требовал бы
+	// переиндексацию, которую index не в силах удовлетворить.
+	statusSkipped = "skipped"
 )
 
 // checkFile - один разошедшийся файл в машиночитаемом списке.
 type checkFile struct {
 	Path   string `json:"path"`
 	Status string `json:"status"`
-	// Reason заполняется только для статуса excluded - это код причины
-	// исключения (см. walk.Reason*).
+	// Reason заполняется для статусов excluded (код причины исключения,
+	// см. walk.Reason*) и skipped (код причины пропуска, см. skip* в
+	// indexreport.go).
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -167,6 +173,10 @@ type checkReport struct {
 	// (см. walk.Reason*).
 	Excluded         int            `json:"excluded"`
 	ExcludedByReason map[string]int `json:"excluded_by_reason,omitempty"`
+	// Skipped - файлов на диске, которых нет в индексе, потому что index
+	// пропустил бы их содержимое (бинарные, пустые, слишком большие).
+	// В отличие от Unindexed на свежесть индекса не влияет.
+	Skipped int `json:"skipped"`
 	// Files - сами разошедшиеся файлы (см. checkFile). Список отсортирован
 	// по статусу и пути и обрезан лимитом --list-limit; счётчики выше
 	// всегда полные, поэтому по ним видно, что список неполон.
@@ -299,6 +309,8 @@ func (r *checkReport) addFile(path, status, reason string) {
 			r.ExcludedByReason = make(map[string]int)
 		}
 		r.ExcludedByReason[reason]++
+	case statusSkipped:
+		r.Skipped++
 	}
 	r.Files = append(r.Files, checkFile{Path: path, Status: status, Reason: reason})
 }
@@ -383,7 +395,20 @@ func compareTree(ctx context.Context, root string, opts checkOptions, s *store.S
 
 		state, found := indexed[path]
 		if !found {
-			rep.addFile(path, statusUnindexed, "")
+			// Прежде чем объявить файл непроиндексированным, надо
+			// понять, взял бы его index вообще: бинарные, пустые и
+			// слишком большие файлы index пропускает по содержимому,
+			// и переиндексация их в базу не добавит.
+			skip, err := skipReason(path, opts.indexOptions)
+			if err != nil {
+				rep.addFailure(path, failureCode(err), err)
+				continue
+			}
+			if skip != "" {
+				rep.addFile(path, statusSkipped, skip)
+			} else {
+				rep.addFile(path, statusUnindexed, "")
+			}
 			continue
 		}
 
@@ -415,6 +440,30 @@ func compareTree(ctx context.Context, root string, opts checkOptions, s *store.S
 
 	sortFailures(rep.Failed)
 	return nil
+}
+
+// skipReason определяет, пропустил бы index файл по содержимому, и возвращает
+// код причины пропуска (см. skip* в indexreport.go); пустая строка означает,
+// что файл подлежит индексации. Пустые и слишком большие файлы распознаются
+// по stat, чтобы не читать содержимое, которое заведомо не понадобится.
+func skipReason(path string, opts indexOptions) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", &fileFailure{Code: failRead, Err: err}
+	}
+	maxBytes := int64(opts.MaxFileSize) * 1024 * 1024
+	if info.Size() == 0 {
+		return skipEmpty, nil
+	}
+	if maxBytes > 0 && info.Size() > maxBytes {
+		return skipTooLarge, nil
+	}
+
+	_, skip, err := readIndexable(path, maxBytes)
+	if err != nil {
+		return "", err
+	}
+	return skip, nil
 }
 
 // reasonUnknown - причина исключения, которую не удалось определить.
@@ -485,6 +534,7 @@ var statusOrder = map[string]int{
 	statusMissing:   1,
 	statusExcluded:  2,
 	statusUnindexed: 3,
+	statusSkipped:   4,
 }
 
 // sortFiles упорядочивает список файлов по статусу, затем по пути, чтобы
@@ -543,6 +593,10 @@ func printCheckSummary(w io.Writer, rep *checkReport, cwd string) {
 	if rep.Excluded > 0 {
 		fmt.Fprintf(w, i18n.T("  newly excluded by rules: %s\n", "  теперь исключено правилами: %s\n"),
 			countsByCode(rep.ExcludedByReason))
+	}
+
+	if rep.Skipped > 0 {
+		fmt.Fprintf(w, i18n.T("skipped by content (not indexable): %d\n", "пропущено по содержимому (не индексируется): %d\n"), rep.Skipped)
 	}
 
 	for _, issue := range rep.Issues {

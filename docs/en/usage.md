@@ -758,6 +758,10 @@ contents of the index and splits the differences into categories:
 - `changed` — the file is in the index but changed on disk;
 - `missing` — the file is in the index but is gone from disk;
 - `unindexed` — the file passes the filters but is not in the index yet;
+- `skipped` — the file passes the filters and is not in the index, but
+  `index` would not take it anyway: its content is binary, empty or larger
+  than `--max-file-size`. Such files do not make the index stale — otherwise
+  `check` would forever demand a reindex that `index` cannot satisfy;
 - `excluded` — the file is both in the index and on disk, but the current
   selection rules no longer accept it (for example `--ext` changed);
 - `issues` — indexing parameter mismatches that a plain `senso index`
@@ -833,9 +837,10 @@ database: .senso/index.db
 | `changed` | number | indexed files that changed on disk |
 | `missing` | number | files in the index that are gone from disk |
 | `unindexed` | number | files on disk that are not indexed yet |
+| `skipped` | number | files on disk absent from the index because `index` would skip their content (binary, empty, too large); does not affect freshness |
 | `excluded` | number | indexed files that no longer pass the filters |
 | `excluded_by_reason` | object | exclusion reason -> number of files; the same codes as in `index --report-json` |
-| `files` | array | objects `{path, status, reason}`; always present, empty as `[]` |
+| `files` | array | objects `{path, status, reason}`; `reason` is filled for `excluded` (exclusion codes) and `skipped` (skip codes `binary`/`empty`/`too_large`); always present, empty as `[]` |
 | `files_truncated` | bool | the `files` list was cut short by `--list-limit`; present only when truncated |
 | `issues` | array | objects `{code, message}`; always present, empty as `[]` |
 | `failed` | array | objects `{path, code, message}` for files whose state could not be checked |
@@ -847,12 +852,13 @@ database: .senso/index.db
 
 `files` saves the agent from walking the tree itself to find out which
 files actually diverged: the list is sorted by status first
-(`changed`, `missing`, `excluded`, `unindexed`), then by path within a
-status. `--list-limit` (default `100`, `0` means no limit) trims this
-list, keeping the files that reindexing fixes first (`changed`,
+(`changed`, `missing`, `excluded`, `unindexed`, `skipped`), then by path
+within a status. `--list-limit` (default `100`, `0` means no limit) trims
+this list, keeping the files that reindexing fixes first (`changed`,
 `missing`), then `excluded`, and only then the usually largest
-`unindexed` group. When the list is cut short, `files_truncated: true`
-appears, while the `changed`, `missing`, `unindexed` and `excluded`
+`unindexed` and `skipped` groups. When the list is cut short,
+`files_truncated: true` appears, while the `changed`, `missing`,
+`unindexed`, `excluded` and `skipped`
 counters stay complete and show the true scale of the divergence.
 
 Codes in `issues`: `no_index` (no index database found — every discovered

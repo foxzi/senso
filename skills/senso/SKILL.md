@@ -114,7 +114,8 @@ message text is translated and may change.
   chunk text by ref; stale files produce a stderr warning and
   `stale`/`stale_reason` in JSON, exit code stays 0.
 - `senso check [--json] [path]` — read-only freshness check; `--json` lists
-  the diverging files (`changed`/`missing`/`unindexed`/`excluded`).
+  the diverging files (`changed`/`missing`/`unindexed`/`excluded`;
+  `skipped` = not indexable content, does not make the index stale).
 - `senso status [--json]` — index statistics, roots, chunking parameters.
 - `senso rm <path>` — remove a file or subtree from the index.
 
