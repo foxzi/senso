@@ -184,6 +184,13 @@ func (s *Store) CheckSchema(ctx context.Context) error {
 	return nil
 }
 
+// Initialized сообщает, создана ли в базе схема. Файл базы без схемы
+// остаётся после index --embed, прерванного до первого эмбеддинга: схема
+// создаётся только когда известна размерность векторов.
+func (s *Store) Initialized(ctx context.Context) (bool, error) {
+	return s.tableExists(ctx, "meta")
+}
+
 // tableExists проверяет наличие таблицы name в текущей базе данных.
 func (s *Store) tableExists(ctx context.Context, name string) (bool, error) {
 	var n int

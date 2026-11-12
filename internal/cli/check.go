@@ -252,6 +252,15 @@ func RunCheck(args []string) error {
 	}
 	defer s.Close()
 
+	// База без схемы (index --embed не дошёл до первого эмбеддинга) - тот
+	// же случай, что и отсутствие базы.
+	initialized, err := s.Initialized(ctx)
+	if err != nil {
+		return err
+	}
+	if !initialized {
+		return finishCheck(opts, missingIndexReport(rep, root, opts))
+	}
 	if err := s.CheckSchema(ctx); err != nil {
 		return err
 	}

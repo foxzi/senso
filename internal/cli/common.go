@@ -99,7 +99,15 @@ func openStore(ctx context.Context, flagDB string) (*store.Store, string, error)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := s.CheckSchema(ctx); err != nil {
+	// База без схемы для читающей команды - то же, что отсутствие индекса.
+	initialized, err := s.Initialized(ctx)
+	if err == nil && !initialized {
+		err = errIndexNotFound()
+	}
+	if err == nil {
+		err = s.CheckSchema(ctx)
+	}
+	if err != nil {
 		s.Close()
 		return nil, "", err
 	}

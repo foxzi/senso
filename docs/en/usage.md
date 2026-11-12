@@ -861,7 +861,7 @@ this list, keeping the files that reindexing fixes first (`changed`,
 `unindexed`, `excluded` and `skipped`
 counters stay complete and show the true scale of the divergence.
 
-Codes in `issues`: `no_index` (no index database found — every discovered
+Codes in `issues`: `no_index` (no index database found, or it has no schema yet — every discovered
 file counts as `unindexed`), `model_mismatch` (the index was built with a
 different embedding model, checked only with `--embed`), `vectors_missing`
 (`--embed` was requested but the index has no vectors), `chunk_params_mismatch`
@@ -999,7 +999,7 @@ message still goes to stderr:
 | Code | Meaning |
 |---|---|
 | `usage` | an argument error detected after flag parsing (for example an unknown `--root`) |
-| `no_index` | the senso database was not found |
+| `no_index` | the senso database was not found, or it has no schema yet (an `index --embed` run failed before the first embedding) |
 | `no_vectors` | the database has no vectors, so `--semantic` and `--hybrid` are impossible |
 | `embed_failed` | failed to get the query embedding from Ollama |
 | `internal` | any other failure: SQLite, I/O, a corrupted database |

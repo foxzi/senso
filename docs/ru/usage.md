@@ -859,7 +859,7 @@ $ senso check
 `changed`, `missing`, `unindexed`, `excluded` и `skipped` остаются
 полными и показывают исходный масштаб расхождений.
 
-Коды в `issues`: `no_index` (база индекса не найдена — все найденные
+Коды в `issues`: `no_index` (база индекса не найдена или в ней ещё нет схемы — все найденные
 файлы попадают в `unindexed`), `model_mismatch` (индекс построен другой
 моделью эмбеддингов, проверяется только с `--embed`), `vectors_missing`
 (запрошен `--embed`, а векторов в индексе нет), `chunk_params_mismatch`
@@ -996,7 +996,7 @@ senso check --json --quiet | jq '{changed, missing, unindexed, excluded}'
 | Код | Значение |
 |---|---|
 | `usage` | ошибка в аргументах, обнаруженная после разбора флагов (например, неизвестный `--root`) |
-| `no_index` | база senso не найдена |
+| `no_index` | база senso не найдена или в ней ещё нет схемы (`index --embed` упал до первого эмбеддинга) |
 | `no_vectors` | в базе нет векторов, `--semantic` и `--hybrid` невозможны |
 | `embed_failed` | не удалось получить эмбеддинг запроса от Ollama |
 | `internal` | остальные сбои: SQLite, ввод-вывод, повреждённая база |
