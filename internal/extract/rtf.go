@@ -39,6 +39,12 @@ var rtfCodepages = map[int]*charmap.Charmap{
 	10000: charmap.Macintosh,
 }
 
+// rtfMaxDepth - предел вложенности групп. В настоящих документах она не
+// превышает нескольких десятков, а каждая открытая группа занимает память:
+// файл из одних открывающих скобок раздул бы стек в десятки раз больше
+// самого файла.
+const rtfMaxDepth = 1000
+
 // rtfParser разбирает поток RTF по байтам, отслеживая стек групп.
 type rtfParser struct {
 	data  []byte
@@ -72,16 +78,21 @@ func rtf(data []byte) (string, error) {
 		stack: []rtfGroup{{uc: 1, first: true}},
 		page:  charmap.Windows1252,
 	}
-	p.parse()
+	if err := p.parse(); err != nil {
+		return "", err
+	}
 	return strings.TrimSpace(p.out.String()), nil
 }
 
 // parse проходит документ от начала до конца.
-func (p *rtfParser) parse() {
+func (p *rtfParser) parse() error {
 	for p.pos < len(p.data) {
 		switch c := p.data[p.pos]; c {
 		case '{':
 			p.pos++
+			if len(p.stack) > rtfMaxDepth {
+				return errors.New("extract: rtf groups are nested too deeply")
+			}
 			g := *p.top()
 			g.first = true
 			p.stack = append(p.stack, g)
@@ -105,6 +116,7 @@ func (p *rtfParser) parse() {
 			p.emitByte(c)
 		}
 	}
+	return nil
 }
 
 // top возвращает текущую (самую вложенную) группу.

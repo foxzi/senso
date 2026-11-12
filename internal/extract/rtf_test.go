@@ -1,6 +1,9 @@
 package extract
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRTFErrors(t *testing.T) {
 	cases := []struct {
@@ -143,5 +146,23 @@ func TestRTF(t *testing.T) {
 				t.Errorf("rtf(%q) = %q, хотим %q", c.input, got, c.want)
 			}
 		})
+	}
+}
+
+// Вложенность групп ограничена: файл из одних открывающих скобок не должен
+// раздувать стек разбора, а документ с обычной вложенностью читается.
+func TestRTFNestingDepth(t *testing.T) {
+	open := func(n int) string { return `{\rtf1 ` + strings.Repeat("{", n) }
+
+	if _, err := rtf([]byte(open(rtfMaxDepth + 1))); err == nil {
+		t.Error("вложенность сверх предела: ожидали ошибку")
+	}
+
+	got, err := rtf([]byte(open(rtfMaxDepth-1) + "text"))
+	if err != nil {
+		t.Fatalf("вложенность в пределах: %v", err)
+	}
+	if got != "text" {
+		t.Errorf("текст = %q, хотим %q", got, "text")
 	}
 }
