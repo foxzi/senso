@@ -123,6 +123,12 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 	if opts.MaxPerFile < 0 {
 		return searchOptions{}, usagef("%s", i18n.T("--max-per-file cannot be negative", "--max-per-file не может быть отрицательным"))
 	}
+	if err := validateGlobs("path", opts.Path); err != nil {
+		return searchOptions{}, err
+	}
+	if err := validateGlobs("exclude", opts.Exclude); err != nil {
+		return searchOptions{}, err
+	}
 
 	return opts, nil
 }

@@ -406,7 +406,11 @@ search modes.
 (`internal/**`, `*.go`, `docs/**/*.md`); a pattern is matched both against
 the result path relative to each indexed root and against the absolute
 path. `--exclude` takes priority over `--path`: a result matching an
-exclusion pattern is dropped even if it also matches `--path`. `--root
+exclusion pattern is dropped even if it also matches `--path`. A pattern
+with invalid syntax is a usage error (exit code 2), here and in the glob
+flags of `index` and `check`; since the comma separates patterns, brace
+alternatives with a comma (`*.{png,jpg}`) must be written as two patterns
+(`*.png,*.jpg`). `--root
 <dir>` restricts results to one specific indexed root — if the given path
 is not among the known roots (`senso status`), the command fails with a
 usage error (exit code 2).

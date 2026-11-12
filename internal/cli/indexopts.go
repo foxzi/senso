@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"senso/internal/chunk"
 	"senso/internal/i18n"
 )
@@ -135,8 +137,39 @@ func parseIndexArgs(args []string) (indexOptions, error) {
 	if _, ok := chunk.ParseStrategy(opts.Chunker); !ok {
 		return indexOptions{}, usagef(i18n.T("--chunker: unknown strategy %q, expected auto or text", "--chunker: неизвестная стратегия %q, ожидается auto или text"), opts.Chunker)
 	}
+	if err := validateSelectionGlobs(opts); err != nil {
+		return indexOptions{}, err
+	}
 
 	return opts, nil
+}
+
+// validateSelectionGlobs проверяет glob-шаблоны флагов отбора файлов.
+func validateSelectionGlobs(opts indexOptions) error {
+	flags := []struct{ name, value string }{
+		{"exclude", opts.Exclude},
+		{"include-hidden", opts.IncludeHidden},
+		{"include-noisy", opts.IncludeNoisy},
+		{"noisy-patterns", opts.NoisyPatterns},
+	}
+	for _, f := range flags {
+		if err := validateGlobs(f.name, f.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateGlobs проверяет синтаксис glob-шаблонов из значения флага name.
+// Сопоставление с некорректным шаблоном не совпадает ни с чем, поэтому без
+// этой проверки опечатка в шаблоне молча давала бы пустой результат.
+func validateGlobs(name, value string) error {
+	for _, p := range splitList(value) {
+		if !doublestar.ValidatePattern(p) {
+			return usagef(i18n.T("--%s: invalid glob pattern %q", "--%s: некорректный glob-шаблон %q"), name, p)
+		}
+	}
+	return nil
 }
 
 // splitList режет строку по запятым, обрезает пробелы вокруг элементов

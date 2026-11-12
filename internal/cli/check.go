@@ -104,6 +104,9 @@ func parseCheckArgs(args []string) (checkOptions, error) {
 	if opts.MaxFileSize <= 0 {
 		return checkOptions{}, usagef("%s", i18n.T("--max-file-size must be greater than 0", "--max-file-size должен быть больше 0"))
 	}
+	if err := validateSelectionGlobs(opts.indexOptions); err != nil {
+		return checkOptions{}, err
+	}
 
 	return opts, nil
 }

@@ -112,8 +112,8 @@ func (f *resultFilter) matchesAnyGlob(path string, patterns []string) bool {
 }
 
 // matchesAnyPattern проверяет slashPath на совпадение с любым из glob-
-// шаблонов patterns. Некорректные шаблоны просто не совпадают ни с чем -
-// как и в internal/walk, недопустимый glob не должен обрушивать поиск.
+// шаблонов patterns. Синтаксис шаблонов проверен при разборе аргументов
+// (validateGlobs), поэтому ошибка сопоставления здесь невозможна.
 func matchesAnyPattern(patterns []string, slashPath string) bool {
 	for _, p := range patterns {
 		if ok, _ := doublestar.Match(p, slashPath); ok {
