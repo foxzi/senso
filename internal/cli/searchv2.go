@@ -67,6 +67,9 @@ type searchResponseV2 struct {
 	Filters  searchFiltersV2   `json:"filters"`
 	Results  []searchResultV2  `json:"results"`
 	Warnings []searchWarningV2 `json:"warnings"`
+	// Relaxed - ни один чанк не содержал всех слов запроса, и выдача
+	// получена смягчённым запросом: достаточно любого из слов.
+	Relaxed bool `json:"relaxed,omitempty"`
 }
 
 // searchFiltersV2 показывает, какие ограничения применены к выдаче.
@@ -244,11 +247,12 @@ func staleMessageV2(code string) string {
 // printSearchJSONV2 печатает ответ формата json-v2 в stdout одним
 // объектом. Пути абсолютные, чтобы ref можно было сразу передать в
 // senso show из любой рабочей директории.
-func printSearchJSONV2(ctx context.Context, s *store.Store, results []store.Result, opts searchOptions, filter *resultFilter) error {
+func printSearchJSONV2(ctx context.Context, s *store.Store, results []store.Result, opts searchOptions, filter *resultFilter, relaxed bool) error {
 	resp, err := buildSearchResponseV2(ctx, s, results, opts, filter)
 	if err != nil {
 		return err
 	}
+	resp.Relaxed = relaxed
 	data, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
 		return err

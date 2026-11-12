@@ -66,7 +66,10 @@ Why this order:
 
 ## Reading results (json-v2)
 
-Top-level: `schema`, `mode`, `query`, `filters`, `results`, `warnings`.
+Top-level: `schema`, `mode`, `query`, `filters`, `results`, `warnings`,
+and `relaxed` (only when `true`): nothing matched all the query words, so
+the results match any of them — treat them as weaker hits and consider a
+shorter query.
 Each result: `ref` (feed it to `senso show`), `path`, `chunk`,
 `line_start`/`line_end`, `rank`, `score`, `text`, `truncated`,
 `source_type` (`text` | `extracted`).

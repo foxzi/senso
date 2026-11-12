@@ -173,7 +173,7 @@ func runSearch(ctx context.Context, opts searchOptions) error {
 		return err
 	}
 
-	results, err := runSearchQuery(ctx, s, opts, filter)
+	results, relaxed, err := runSearchQuery(ctx, s, opts, filter)
 	if err != nil {
 		return err
 	}
@@ -185,6 +185,11 @@ func runSearch(ctx context.Context, opts searchOptions) error {
 	// форматам они печатаются в stderr.
 	format := opts.outputFormat()
 	if format != formatJSONV2 {
+		if relaxed {
+			fmt.Fprintln(os.Stderr, i18n.T(
+				"senso: nothing matches all the words of the query; showing matches for any of them",
+				"senso: нет совпадений со всеми словами запроса; показаны совпадения с любым из них"))
+		}
 		if err := warnStaleResults(ctx, s, results); err != nil {
 			return err
 		}
@@ -192,7 +197,7 @@ func runSearch(ctx context.Context, opts searchOptions) error {
 
 	switch format {
 	case formatJSONV2:
-		return printSearchJSONV2(ctx, s, results, opts, filter)
+		return printSearchJSONV2(ctx, s, results, opts, filter, relaxed)
 	case formatJSON:
 		return printSearchJSON(results, opts.Query, opts.Snippet)
 	case formatPaths:
@@ -278,23 +283,38 @@ func filterResults(results []store.Result, filter *resultFilter) []store.Result 
 // --max-per-file (см. postProcessResults в searchdedup.go). Гибридный режим
 // фильтрует список каждого источника до fuseRRF (см. searchHybrid), поэтому
 // здесь для него повторная фильтрация не нужна.
-func runSearchQuery(ctx context.Context, s *store.Store, opts searchOptions, filter *resultFilter) ([]store.Result, error) {
+//
+// Лексический запрос строгий: чанк должен содержать все его слова. Если
+// после фильтров так не нашлось ничего, запрос повторяется в смягчённом
+// виде - достаточно любого из слов, - и relaxed сообщает, что выдача
+// получена им. Пустой ответ на длинный запрос бесполезен, а лишнее слово
+// в запросе - частая причина пустой выдачи.
+func runSearchQuery(ctx context.Context, s *store.Store, opts searchOptions, filter *resultFilter) (results []store.Result, relaxed bool, err error) {
 	if opts.Hybrid {
-		return searchHybrid(ctx, s, opts, filter)
+		results, err = searchHybrid(ctx, s, opts, filter)
+		return results, false, err
 	}
 
 	pool := searchPoolSize(opts.K, needsExpandedPool(filter, opts))
-	var results []store.Result
-	var err error
 	if opts.Semantic {
 		results, err = searchSemantic(ctx, s, opts, pool)
 	} else {
 		results, err = s.SearchLexical(ctx, opts.Query, pool)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return postProcessResults(filterResults(results, filter), opts), nil
+	results = filterResults(results, filter)
+
+	if len(results) == 0 && !opts.Semantic {
+		results, err = s.SearchLexicalAny(ctx, opts.Query, pool)
+		if err != nil {
+			return nil, false, err
+		}
+		results = filterResults(results, filter)
+		relaxed = len(results) > 0
+	}
+	return postProcessResults(results, opts), relaxed, nil
 }
 
 // searchSemantic выполняет поиск по векторам: проверяет наличие векторов в

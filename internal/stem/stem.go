@@ -34,8 +34,26 @@ func Text(s string) string {
 	return strings.Join(tokens, " ")
 }
 
-// Query превращает пользовательский запрос в выражение для FTS5 MATCH.
+// Query превращает пользовательский запрос в выражение для FTS5 MATCH:
+// чанк должен содержать все слова и фразы запроса.
 func Query(s string) string {
+	return strings.Join(queryParts(s), " ")
+}
+
+// QueryAny - смягчённый вариант Query: чанку достаточно содержать хотя бы
+// одно слово или фразу запроса. Для запроса из одной части (или пустого)
+// возвращает пустую строку: смягчать в нём нечего.
+func QueryAny(s string) string {
+	parts := queryParts(s)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts, " OR ")
+}
+
+// queryParts разбирает запрос на части выражения MATCH: слова вне кавычек
+// и фразы в кавычках.
+func queryParts(s string) []string {
 	var parts []string
 	rest := Fold(s)
 
@@ -62,7 +80,7 @@ func Query(s string) string {
 		rest = rest[close+1:]
 	}
 
-	return strings.Join(parts, " ")
+	return parts
 }
 
 // plainPart разбивает текст вне кавычек на слова, каждое оборачивая в свои

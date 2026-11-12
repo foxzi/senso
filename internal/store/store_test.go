@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1030,5 +1031,52 @@ func TestMetaRejectsGarbageDim(t *testing.T) {
 	}
 	if _, _, err := s.Meta(context.Background()); err == nil {
 		t.Fatal("Meta() не вернул ошибку для dim=10garbage")
+	}
+}
+
+// Смягчённый поиск находит чанки с любым словом запроса и ставит выше те,
+// где слов совпало больше.
+func TestSearchLexicalAny(t *testing.T) {
+	s := mustOpenInit(t, "", 0)
+	ctx := context.Background()
+
+	for path, text := range map[string]string{
+		"/root/both.txt": "large uploads are limited by the proxy",
+		"/root/one.txt":  "uploads go to object storage",
+		"/root/none.txt": "nothing relevant here",
+	} {
+		if err := s.ReplaceFile(ctx, path, 1, 10, "hash", chunksOf(text), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const query = "large uploads nginx"
+	strict, err := s.SearchLexical(ctx, query, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strict) != 0 {
+		t.Fatalf("строгий поиск вернул %d результатов, ожидалось 0", len(strict))
+	}
+
+	results, err := s.SearchLexicalAny(ctx, query, 10)
+	if err != nil {
+		t.Fatalf("SearchLexicalAny вернул ошибку: %v", err)
+	}
+	var paths []string
+	for _, r := range results {
+		paths = append(paths, r.Path)
+	}
+	if want := []string{"/root/both.txt", "/root/one.txt"}; !reflect.DeepEqual(paths, want) {
+		t.Errorf("пути = %v, ожидалось %v", paths, want)
+	}
+
+	// Запрос из одного слова смягчённым поиском не выполняется.
+	single, err := s.SearchLexicalAny(ctx, "uploads", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(single) != 0 {
+		t.Errorf("запрос из одного слова вернул %d результатов, ожидалось 0", len(single))
 	}
 }

@@ -543,6 +543,7 @@ Top-level fields:
 | `filters` | restrictions applied to the results |
 | `results` | results in output order |
 | `warnings` | warnings about the results; the field is always present, an empty list means there is nothing to report |
+| `relaxed` | `true` when nothing matched all the words of a lexical query and the results match any of them; absent otherwise |
 
 `filters` contains only active restrictions: `k` is always present, the
 other fields (`path`, `ext`, `exclude`, `root`, `deduplicate`,
@@ -1125,6 +1126,11 @@ query does not pull results away from actual text matches.
 
 - plain words separated by spaces are matched with an implicit AND (all
   words are required);
+- if nothing matches all the words, lexical search repeats the query
+  requiring any of them: chunks with more matching words come first. A
+  note about it goes to stderr, and `json-v2` sets `"relaxed": true`.
+  This applies to the default lexical mode only, and a one-word query
+  has nothing to relax;
 - a phrase in double quotes matches words strictly adjacent to each other,
   but in any word form the stemmer allows. In the shell, the query's
   double quotes must be wrapped in single quotes, otherwise the shell eats

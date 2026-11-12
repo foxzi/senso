@@ -619,8 +619,21 @@ const bm25Weights = "1.0, 0.4, 0.8"
 // найдено, возвращает пустой срез без ошибки. Тай-брейк по (path, seq) в
 // ORDER BY делает порядок результатов с одинаковым rank детерминированным.
 func (s *Store) SearchLexical(ctx context.Context, query string, k int) ([]Result, error) {
-	stemmed := stem.Query(query)
-	if stemmed == "" {
+	return s.searchFTS(ctx, stem.Query(query), k)
+}
+
+// SearchLexicalAny - смягчённый SearchLexical: находит чанки хотя бы с
+// одним словом или фразой запроса (см. stem.QueryAny). Чанки, где совпало
+// больше слов, bm25 ставит выше. Для запроса из одного слова возвращает
+// пустой срез: он не отличается от строгого.
+func (s *Store) SearchLexicalAny(ctx context.Context, query string, k int) ([]Result, error) {
+	return s.searchFTS(ctx, stem.QueryAny(query), k)
+}
+
+// searchFTS выполняет готовое выражение MATCH; пустое выражение даёт
+// пустой срез.
+func (s *Store) searchFTS(ctx context.Context, match string, k int) ([]Result, error) {
+	if match == "" {
 		return nil, nil
 	}
 
@@ -633,7 +646,7 @@ func (s *Store) SearchLexical(ctx context.Context, query string, k int) ([]Resul
 		 WHERE fts_chunks MATCH ?
 		 ORDER BY rank, f.path, c.seq
 		 LIMIT ?`,
-		stemmed, k,
+		match, k,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(i18n.T("store: lexical search: %w", "store: лексический поиск: %w"), err)

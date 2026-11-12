@@ -111,3 +111,22 @@ func TestQueryUnclosedQuoteDoesNotPanic(t *testing.T) {
 		t.Errorf("Query(unclosed) = %q, want %q", got, want)
 	}
 }
+
+func TestQueryAny(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"поиск файлов", `"поиск" OR "файл"`},
+		{`"поиск файлов" индекс*`, `"поиск файл" OR "индекс"*`},
+		// Одну часть смягчать нечем.
+		{"файлам", ""},
+		{`"поиск файлов"`, ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := QueryAny(c.in); got != c.want {
+			t.Errorf("QueryAny(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
