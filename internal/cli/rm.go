@@ -37,14 +37,15 @@ func RunRm(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), commandHelpText(rmUsageLine(), rmSummary(), fs))
 	}
-	if err := fs.Parse(args); err != nil {
-		return finishParse(fs, err)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return err
 	}
-	if fs.NArg() != 1 {
+	if len(rest) != 1 {
 		return usagef("%s", i18n.T("rm: exactly one argument is required - the path", "rm: требуется ровно один аргумент - путь"))
 	}
 
-	target, err := filepath.Abs(fs.Arg(0))
+	target, err := filepath.Abs(rest[0])
 	if err != nil {
 		return err
 	}

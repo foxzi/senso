@@ -37,6 +37,30 @@ func finishParse(fs *flag.FlagSet, err error) error {
 	return &UsageError{Err: err}
 }
 
+// parseArgs разбирает args и возвращает позиционные аргументы. В отличие от
+// fs.Parse, флаги распознаются и после позиционных аргументов: пакет flag
+// останавливается на первом слове без дефиса, из-за чего флаг, указанный
+// после запроса или пути, молча становился его частью. Всё, что идёт после
+// "--", считается позиционными аргументами.
+func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, finishParse(fs, err)
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		// Разбор остановился либо на "--", либо на позиционном аргументе.
+		if consumed := len(args) - len(rest); consumed > 0 && args[consumed-1] == "--" {
+			return append(positional, rest...), nil
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
+}
+
 // UsageError сигнализирует об ошибке в аргументах командной строки.
 // main.go преобразует такую ошибку в код выхода 2.
 type UsageError struct {

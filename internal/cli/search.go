@@ -91,11 +91,12 @@ func parseSearchArgs(args []string) (searchOptions, error) {
 		fmt.Fprint(fs.Output(), commandHelpText(searchUsageLine(), searchSummary(), fs))
 	}
 
-	if err := fs.Parse(args); err != nil {
-		return searchOptions{}, finishParse(fs, err)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return searchOptions{}, err
 	}
 
-	opts.Query = strings.Join(fs.Args(), " ")
+	opts.Query = strings.Join(rest, " ")
 	if opts.Query == "" {
 		return searchOptions{}, usagef("%s", i18n.T("search: query text is required", "search: требуется текст запроса"))
 	}

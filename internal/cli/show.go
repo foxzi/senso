@@ -78,10 +78,11 @@ func parseShowArgs(args []string) (showOptions, error) {
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), commandHelpText(showUsageLine(), showSummary(), fs))
 	}
-	if err := fs.Parse(args); err != nil {
-		return showOptions{}, finishParse(fs, err)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return showOptions{}, err
 	}
-	if fs.NArg() != 1 {
+	if len(rest) != 1 {
 		return showOptions{}, usagef("%s", i18n.T(
 			"exactly one argument is required - the reference <path>#<chunk>",
 			"требуется ровно один аргумент - ссылка <путь>#<чанк>",
@@ -94,7 +95,7 @@ func parseShowArgs(args []string) (showOptions, error) {
 		return showOptions{}, usagef("%s", i18n.T("--after cannot be negative", "--after не может быть отрицательным"))
 	}
 
-	opts.Ref = fs.Arg(0)
+	opts.Ref = rest[0]
 	path, seq, err := parseRef(opts.Ref)
 	if err != nil {
 		return showOptions{}, err

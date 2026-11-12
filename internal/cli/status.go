@@ -41,11 +41,12 @@ func RunStatus(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), commandHelpText(statusUsageLine(), statusSummary(), fs))
 	}
-	if err := fs.Parse(args); err != nil {
-		return finishParse(fs, err)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return err
 	}
-	if fs.NArg() != 0 {
-		return usagef(i18n.T("status: unknown arguments: %v", "status: неизвестные аргументы: %v"), fs.Args())
+	if len(rest) != 0 {
+		return usagef(i18n.T("status: unknown arguments: %v", "status: неизвестные аргументы: %v"), rest)
 	}
 
 	s, path, err := openStore(ctx, opts.DB)

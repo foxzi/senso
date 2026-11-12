@@ -103,11 +103,11 @@ func parseIndexArgs(args []string) (indexOptions, error) {
 		fmt.Fprint(fs.Output(), commandHelpText(indexUsageLine(), indexSummary(), fs))
 	}
 
-	if err := fs.Parse(args); err != nil {
-		return indexOptions{}, finishParse(fs, err)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return indexOptions{}, err
 	}
 
-	rest := fs.Args()
 	switch len(rest) {
 	case 0:
 		opts.Path = "."

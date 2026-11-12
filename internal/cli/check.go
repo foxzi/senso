@@ -80,14 +80,14 @@ func parseCheckArgs(args []string) (checkOptions, error) {
 		fmt.Fprint(fs.Output(), commandHelpText(checkUsageLine(), checkSummary(), fs))
 	}
 
-	if err := fs.Parse(args); err != nil {
-		return checkOptions{}, finishParse(fs, err)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return checkOptions{}, err
 	}
 
 	opts.setFlags = make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { opts.setFlags[f.Name] = true })
 
-	rest := fs.Args()
 	switch len(rest) {
 	case 0:
 		opts.Path = "."

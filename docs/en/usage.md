@@ -356,11 +356,11 @@ entries.
 
 Searches the index and prints the most relevant chunks.
 
-**Important:** flags must be given before the query text. Argument parsing
-stops at the first word that does not start with `-`, so
-`senso search "text" --json` will not behave as expected — `--json` ends
-up as part of the query text instead of being recognized as a flag. Use
-`senso search --json "text"` instead.
+Flags may be given before or after the query text, in every command:
+`senso search --json "text"` and `senso search "text" --json` are
+equivalent. A query word that starts with `-` would be read as a flag;
+put `--` before the query to turn flag parsing off for the rest of the
+line: `senso search --json -- -v flag`.
 
 Flags:
 
