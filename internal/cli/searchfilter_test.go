@@ -149,6 +149,35 @@ func TestNewResultFilterRootFlag(t *testing.T) {
 	}
 }
 
+// TestResultFilterDotDotPrefixedName проверяет, что каталог, имя которого
+// начинается с двух точек, считается лежащим внутри корня: выход за корень -
+// это компонент "..", а не префикс "..".
+func TestResultFilterDotDotPrefixedName(t *testing.T) {
+	root := filepath.FromSlash("/home/user/project")
+	path := filepath.Join(root, "..data", "file.go")
+
+	byRoot, err := newResultFilter("", "", "", root, []string{root})
+	if err != nil {
+		t.Fatalf("newResultFilter вернул ошибку: %v", err)
+	}
+	if !byRoot.Match(path) {
+		t.Errorf("--root: Match(%q) = false, хотим true", path)
+	}
+
+	byGlob, err := newResultFilter("..data/**", "", "", "", []string{root})
+	if err != nil {
+		t.Fatalf("newResultFilter вернул ошибку: %v", err)
+	}
+	if !byGlob.Match(path) {
+		t.Errorf("--path: Match(%q) = false, хотим true", path)
+	}
+
+	parent := filepath.Dir(root)
+	if byRoot.Match(parent) {
+		t.Errorf("--root: Match(%q) = true, хотим false (родитель корня)", parent)
+	}
+}
+
 // TestNewResultFilterUnknownRoot проверяет, что --root с путём, которого
 // нет среди Roots(), возвращает понятную usage-ошибку.
 func TestNewResultFilterUnknownRoot(t *testing.T) {

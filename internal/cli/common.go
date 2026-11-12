@@ -83,11 +83,22 @@ func shortenPath(abs, cwd string) string {
 	if abs == cwd {
 		return "."
 	}
-	rel, err := filepath.Rel(cwd, abs)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	rel, ok := relInside(cwd, abs)
+	if !ok {
 		return abs
 	}
 	return rel
+}
+
+// relInside возвращает путь path относительно base и сообщает, лежит ли
+// path внутри base (или совпадает с ним). Выход за пределы base - это
+// компонент "..", а не префикс "..": имя вида "..data" остаётся внутри.
+func relInside(base, path string) (string, bool) {
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
 }
 
 // errIndexNotFound - ошибка «индекс не найден», единая для случая, когда

@@ -21,6 +21,8 @@ func TestShortenPath(t *testing.T) {
 		{"внутри cwd", filepath.Join(cwd, "src", "main.go"), cwd, filepath.Join("src", "main.go")},
 		{"равен cwd", cwd, cwd, "."},
 		{"снаружи cwd", "/home/other/file.go", cwd, "/home/other/file.go"},
+		{"родитель cwd", "/home/user", cwd, "/home/user"},
+		{"имя начинается с двух точек", filepath.Join(cwd, "..data", "main.go"), cwd, filepath.Join("..data", "main.go")},
 	}
 
 	for _, tc := range cases {

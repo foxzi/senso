@@ -100,8 +100,8 @@ func (f *resultFilter) matchesAnyGlob(path string, patterns []string) bool {
 		return true
 	}
 	for _, root := range f.roots {
-		rel, err := filepath.Rel(root, path)
-		if err != nil || strings.HasPrefix(rel, "..") {
+		rel, ok := relInside(root, path)
+		if !ok {
 			continue
 		}
 		if matchesAnyPattern(patterns, filepath.ToSlash(rel)) {
@@ -126,11 +126,8 @@ func matchesAnyPattern(patterns []string, slashPath string) bool {
 // isWithinRoot сообщает, лежит ли path внутри root (или совпадает с ним).
 // Оба пути ожидаются абсолютными и чистыми.
 func isWithinRoot(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || !strings.HasPrefix(rel, "..")
+	_, ok := relInside(root, path)
+	return ok
 }
 
 // containsCleanPath сообщает, есть ли среди roots путь, совпадающий
