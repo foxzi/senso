@@ -43,9 +43,12 @@ func epub(data []byte) (string, error) {
 	for _, href := range spineHrefs(opf) {
 		name := path.Join(base, cleanHref(href))
 		part, err := zipRead(z, name)
-		if err != nil {
+		if errors.Is(err, errNoEntry) {
 			// Битая ссылка на главу не повод терять всю книгу.
 			continue
+		}
+		if err != nil {
+			return "", err
 		}
 		s, err := xhtmlText(part)
 		if err != nil || strings.TrimSpace(s) == "" {

@@ -3,6 +3,7 @@ package extract
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -19,8 +20,13 @@ func xlsx(data []byte) (string, error) {
 		return "", err
 	}
 
+	// Таблицы строк может не быть: тогда в книге только числа.
 	var shared []string
-	if part, err := zipRead(z, "xl/sharedStrings.xml"); err == nil {
+	part, err := zipRead(z, "xl/sharedStrings.xml")
+	if err != nil && !errors.Is(err, errNoEntry) {
+		return "", err
+	}
+	if err == nil {
 		if shared, err = sharedStrings(part); err != nil {
 			return "", err
 		}

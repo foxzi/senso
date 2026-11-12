@@ -214,6 +214,11 @@ holds for tables placed on a slide. The
 legacy `.doc` format (Word 97-2003) is not supported; convert such files
 to `.docx` or `.rtf`.
 
+Zip-based documents are unpacked within a memory budget: 50 bytes of
+content per byte of the file, and never less than 32 MiB. A file that
+unpacks into more (a "zip bomb") is not indexed and is reported as
+`extract_failed`.
+
 #### Chunk boundaries: `--chunker`
 
 Chunk size is measured in runes (`--chunk-size`, `--overlap`), but the

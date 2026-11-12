@@ -14,6 +14,7 @@ package extract
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -70,13 +71,42 @@ func zipEntry(data []byte, name string) ([]byte, error) {
 	return zipRead(z, name)
 }
 
-// zipOpen открывает zip-архив, лежащий в памяти.
-func zipOpen(data []byte) (*zip.Reader, error) {
-	return zip.NewReader(bytes.NewReader(data), int64(len(data)))
+// Бюджет распаковки архива: не больше unpackRatio байт на каждый байт
+// архива и не меньше unpackFloor. Настоящие документы сжимаются в разы
+// слабее, а deflate позволяет раздуть данные примерно в тысячу раз: без
+// бюджета документ в несколько мегабайт занял бы гигабайты памяти.
+const (
+	unpackRatio = 50
+	unpackFloor = 32 << 20
+)
+
+var (
+	// errNoEntry - в архиве нет файла с запрошенным именем.
+	errNoEntry = errors.New("not found in archive")
+	// errUnpackBudget - распакованное содержимое архива превысило бюджет.
+	errUnpackBudget = errors.New("extract: unpacked content is too large for the archive size")
+)
+
+// archive - zip-архив в памяти с бюджетом распаковки.
+type archive struct {
+	*zip.Reader
+	// left - сколько байт распакованных данных ещё можно прочитать.
+	left int64
 }
 
-// zipRead возвращает содержимое файла name из открытого архива.
-func zipRead(z *zip.Reader, name string) ([]byte, error) {
+// zipOpen открывает zip-архив, лежащий в памяти.
+func zipOpen(data []byte) (*archive, error) {
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	return &archive{Reader: z, left: max(unpackFloor, unpackRatio*int64(len(data)))}, nil
+}
+
+// zipRead возвращает содержимое файла name из открытого архива. Прочитанное
+// списывается с бюджета распаковки, в том числе при повторном чтении того
+// же файла.
+func zipRead(z *archive, name string) ([]byte, error) {
 	for _, f := range z.File {
 		if f.Name != name {
 			continue
@@ -86,14 +116,24 @@ func zipRead(z *zip.Reader, name string) ([]byte, error) {
 			return nil, err
 		}
 		defer rc.Close()
-		return io.ReadAll(rc)
+		// Читаем на байт больше остатка, чтобы отличить превышение от
+		// файла, занявшего остаток ровно.
+		out, err := io.ReadAll(io.LimitReader(rc, z.left+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(out)) > z.left {
+			return nil, errUnpackBudget
+		}
+		z.left -= int64(len(out))
+		return out, nil
 	}
-	return nil, fmt.Errorf("extract: %s not found in archive", name)
+	return nil, fmt.Errorf("extract: %s %w", name, errNoEntry)
 }
 
 // zipNames возвращает имена файлов архива, для которых keep даёт true,
 // в порядке их следования в архиве.
-func zipNames(z *zip.Reader, keep func(string) bool) []string {
+func zipNames(z *archive, keep func(string) bool) []string {
 	var out []string
 	for _, f := range z.File {
 		if keep(f.Name) {
