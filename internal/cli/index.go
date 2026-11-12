@@ -46,8 +46,7 @@ func RunIndex(args []string) error {
 	}
 	defer s.Close()
 
-	fresh, err := prepareIndexStore(dbCtx, s, opts, root)
-	if err != nil {
+	if err := prepareIndexStore(dbCtx, s, opts, root); err != nil {
 		return err
 	}
 
@@ -67,7 +66,7 @@ func RunIndex(args []string) error {
 	}
 	rep.Scanned = len(candidates)
 
-	ix, err := newIndexer(dbCtx, s, opts, rep, root, fresh)
+	ix, err := newIndexer(dbCtx, s, opts, rep, root)
 	if err != nil {
 		return err
 	}
@@ -135,59 +134,54 @@ func openIndexStore(ctx context.Context, opts indexOptions) (*store.Store, strin
 	return s, dbPath, nil
 }
 
-// prepareIndexStore сверяет параметры базы с параметрами запуска и создаёт
-// схему, когда это возможно сделать до обхода файлов. Возвращает fresh=true,
-// если схемы ещё нет (свежая база с --embed: размерность векторов станет
-// известна только после первого эмбеддинга).
-func prepareIndexStore(ctx context.Context, s *store.Store, opts indexOptions, root string) (bool, error) {
-	// Если meta ещё нет (свежая база), схема не создана. Проверка
-	// совпадения модели нужна только при --embed: без него модель в базе
-	// не используется вообще.
-	fresh := true
-	if existingModel, existingDim, metaErr := s.Meta(ctx); metaErr == nil {
-		fresh = false
-		if opts.Embed && existingModel != "" && existingModel != opts.Model {
-			return false, fmt.Errorf(i18n.T("index was built with model %s (dim %d); remove .senso/index.db or specify --model %s", "индекс построен моделью %s (dim %d); удалите .senso/index.db или укажите --model %s"), existingModel, existingDim, existingModel)
-		}
+// prepareIndexStore создаёт схему новой базы, а для существующей сверяет её
+// параметры с параметрами запуска. Схема создаётся до обхода файлов и до
+// обращения к Ollama: если сервис эмбеддингов недоступен, после прерванного
+// запуска остаётся пустой, но рабочий индекс, а не файл базы без таблиц.
+func prepareIndexStore(ctx context.Context, s *store.Store, opts indexOptions, root string) error {
+	initialized, err := s.Initialized(ctx)
+	if err != nil {
+		return err
 	}
 
-	// Параметры нарезки сверяем до первой записи: продолжать индексацию
-	// с другой нарезкой нельзя, иначе база смешает чанки двух стратегий.
-	if !fresh {
+	if !initialized {
+		if err := s.Init(ctx, root); err != nil {
+			return err
+		}
+		if err := saveIndexParams(ctx, s, opts); err != nil {
+			return err
+		}
+	} else {
+		// Проверка совпадения модели нужна только при --embed: без него
+		// модель в базе не используется вообще.
+		existingModel, existingDim, err := s.Meta(ctx)
+		if err != nil {
+			return err
+		}
+		if opts.Embed && existingModel != "" && existingModel != opts.Model {
+			return fmt.Errorf(i18n.T("index was built with model %s (dim %d); remove .senso/index.db or specify --model %s", "индекс построен моделью %s (dim %d); удалите .senso/index.db или укажите --model %s"), existingModel, existingDim, existingModel)
+		}
+
+		// Параметры нарезки сверяем до первой записи: продолжать
+		// индексацию с другой нарезкой нельзя, иначе база смешает чанки
+		// двух стратегий.
 		if err := ensureChunkParams(ctx, s, opts); err != nil {
-			return false, err
+			return err
 		}
 	}
 
 	// Префиксы для эмбеддингов сохраняем в meta безусловно (в том числе
 	// пустые), чтобы повторная индексация с новыми префиксами замещала
-	// старые значения. Пишем сразу, если схема уже существует (!fresh);
-	// для свежей базы это делается после первого s.Init.
-	if opts.Embed && !fresh {
-		if err := savePrefixes(ctx, s, opts); err != nil {
-			return false, err
-		}
+	// старые значения.
+	if opts.Embed {
+		return savePrefixes(ctx, s, opts)
 	}
-
-	// Без --embed индексация полностью локальная: схему создаём сразу,
-	// не дожидаясь эмбеддинга (которого не будет), к Ollama вообще не
-	// обращаемся.
-	if fresh && !opts.Embed {
-		if err := s.Init(ctx, "", 0, root); err != nil {
-			return false, err
-		}
-		fresh = false
-		if err := saveIndexParams(ctx, s, opts); err != nil {
-			return false, err
-		}
-	}
-
-	return fresh, nil
+	return nil
 }
 
 // indexer хранит состояние обработки файлов между итерациями цикла
 // индексации: подключение к базе, отчёт и флаги, меняющиеся по ходу работы
-// (fresh, backfill).
+// (modelKnown).
 type indexer struct {
 	// ctx - контекст для операций с базой данных, отдельный от
 	// сигнального контекста цикла индексации: текущий файл всегда
@@ -200,8 +194,10 @@ type indexer struct {
 	strategy chunk.Strategy
 	root     string
 	cwd      string
-	fresh    bool
+	// backfill - все файлы должны пройти через эмбеддинг, см. newIndexer.
 	backfill bool
+	// modelKnown - модель эмбеддингов уже записана в базе.
+	modelKnown bool
 	// unindexable - кандидаты, пропущенные по содержимому (бинарные,
 	// пустые после извлечения текста): их прежние записи убирает prune.
 	unindexable map[string]bool
@@ -209,8 +205,8 @@ type indexer struct {
 
 // newIndexer готовит состояние цикла индексации: клиент эмбеддингов,
 // стратегию нарезки и режим дозаполнения векторов.
-func newIndexer(ctx context.Context, s *store.Store, opts indexOptions, rep *indexReport, root string, fresh bool) (*indexer, error) {
-	ix := &indexer{ctx: ctx, s: s, opts: opts, rep: rep, root: root, fresh: fresh, unindexable: make(map[string]bool)}
+func newIndexer(ctx context.Context, s *store.Store, opts indexOptions, rep *indexReport, root string) (*indexer, error) {
+	ix := &indexer{ctx: ctx, s: s, opts: opts, rep: rep, root: root, unindexable: make(map[string]bool)}
 	ix.cwd, _ = os.Getwd()
 	// Значение флага уже проверено при разборе аргументов.
 	ix.strategy, _ = chunk.ParseStrategy(opts.Chunker)
@@ -220,15 +216,22 @@ func newIndexer(ctx context.Context, s *store.Store, opts indexOptions, rep *ind
 	}
 
 	// backfill означает, что запрошены эмбеддинги, а векторов в базе пока
-	// нет (индекс раньше строился без --embed) - тогда быстрый путь по
-	// mtime/size отключается на этот запуск, чтобы все файлы прошли через
-	// эмбеддинг. См. комментарий к applyBackfill.
-	if opts.Embed && !fresh {
+	// нет (индекс раньше строился без --embed) или неизвестно, какой
+	// моделью они построены, - тогда быстрый путь по mtime/size отключается
+	// на этот запуск, чтобы все файлы прошли через эмбеддинг. См.
+	// комментарий к applyBackfill.
+	if opts.Embed {
+		model, _, err := s.Meta(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ix.modelKnown = model != ""
+
 		hasVectors, err := s.HasVectors(ctx)
 		if err != nil {
 			return nil, err
 		}
-		ix.backfill = !hasVectors
+		ix.backfill = !hasVectors || !ix.modelKnown
 	}
 	return ix, nil
 }
@@ -249,14 +252,9 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 	curMtime := info.ModTime().UnixNano()
 	curSize := info.Size()
 
-	var dbMtime, dbSize int64
-	var dbHash string
-	var found bool
-	if !ix.fresh {
-		dbMtime, dbSize, dbHash, found, err = ix.s.FileState(ix.ctx, path)
-		if err != nil {
-			return err
-		}
+	dbMtime, dbSize, dbHash, found, err := ix.s.FileState(ix.ctx, path)
+	if err != nil {
+		return err
 	}
 
 	// Быстрый путь: метаданные совпали, содержимое читать не нужно.
@@ -310,18 +308,15 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 			return err
 		}
 
-		if ix.fresh {
-			if err := ix.initSchema(len(vectors[0])); err != nil {
+		// Модель записываем вместе с первыми векторами: по ней поиск
+		// строит эмбеддинг запроса, а размерность становится известна
+		// только сейчас.
+		if !ix.modelKnown {
+			if err := ix.s.SetModel(ix.ctx, ix.opts.Model, len(vectors[0])); err != nil {
 				return err
 			}
+			ix.modelKnown = true
 		}
-	} else if ix.fresh {
-		// Пустой набор чанков ничего не говорит о размерности
-		// модели, а без схемы сохранить файл нельзя - пропускаем.
-		// (fresh здесь возможен только при --embed: без него схема
-		// уже создана до сканирования файлов.)
-		ix.rep.addSkip(skipNoSchema)
-		return nil
 	}
 
 	if err := ix.s.ReplaceFile(ix.ctx, path, curMtime, curSize, curHash, chunks, vectors); err != nil {
@@ -340,26 +335,13 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 	return nil
 }
 
-// initSchema создаёт схему свежей базы, когда размерность векторов стала
-// известна после первого эмбеддинга, и записывает параметры индексации.
-func (ix *indexer) initSchema(dim int) error {
-	if err := ix.s.Init(ix.ctx, ix.opts.Model, dim, ix.root); err != nil {
-		return err
-	}
-	ix.fresh = false
-	if err := saveIndexParams(ix.ctx, ix.s, ix.opts); err != nil {
-		return err
-	}
-	return savePrefixes(ix.ctx, ix.s, ix.opts)
-}
-
 // finish завершает индексацию: подчищает записи файлов, которых в индексе
 // быть не должно (--prune), и отмечает время и корень. При прерывании индекс
 // остаётся консистентным, но неполным: время индексации не отмечается и
 // лишние записи не подчищаются, иначе незатронутые записи выглядели бы как
 // проверенные.
 func (ix *indexer) finish(ctx context.Context, candidates []string) error {
-	if ix.rep.Interrupted || ix.fresh {
+	if ix.rep.Interrupted {
 		return nil
 	}
 	if ix.opts.Prune {

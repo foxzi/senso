@@ -171,7 +171,7 @@ func mustBuildShowIndex(t *testing.T) (dbPath, filePath string) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.Init(context.Background(), "", 0, "/root"); err != nil {
+	if err := s.Init(context.Background(), "/root"); err != nil {
 		t.Fatal(err)
 	}
 

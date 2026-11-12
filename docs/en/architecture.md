@@ -186,7 +186,10 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
   initialized, but lazily (`EnsureVectors`/
   `CREATE VIRTUAL TABLE IF NOT EXISTS`) — on the first `--embed` indexing
   run, because the vector dimensionality is only known once the first
-  embedding has actually been produced by the chosen model.
+  embedding has actually been produced by the chosen model. The model and
+  its dimensionality are written to `meta` at the same moment: until then
+  the database is a purely lexical index, even if `index --embed` could not
+  reach Ollama.
 
 ## Why CGO and a vendored sqlite-vec
 

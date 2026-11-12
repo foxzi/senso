@@ -118,6 +118,15 @@ func ensureChunkParams(ctx context.Context, s *store.Store, opts indexOptions) e
 		return saveIndexParams(ctx, s, opts)
 	}
 	if diff := chunkParamsDiff(stored, want); len(diff) > 0 {
+		// В пустой базе смешивать нечего (например, первый запуск с
+		// --embed не дошёл до записи файлов): параметры просто меняются.
+		paths, err := s.ListPaths(ctx, "")
+		if err != nil {
+			return err
+		}
+		if len(paths) == 0 {
+			return saveIndexParams(ctx, s, opts)
+		}
 		return fmt.Errorf(i18n.T(
 			"index was built with other chunking parameters (%s); reindex from scratch (remove .senso) or repeat the parameters of the index",
 			"индекс построен с другими параметрами нарезки (%s); переиндексируйте базу заново (удалите .senso) или повторите параметры индекса",

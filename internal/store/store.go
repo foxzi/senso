@@ -125,37 +125,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
 `
 
 // Init создаёт схему при первом запуске (если таблица meta ещё не
-// существует) и фиксирует модель эмбеддингов вместе с размерностью и
-// корневой директорией индекса. Пустая модель ("") и dim=0 допустимы - это
-// чисто лексический индекс без векторов. Если схема уже существует и в ней
-// сохранена непустая модель, проверяет, что она совпадает с переданной - при
-// расхождении возвращает ошибку.
-func (s *Store) Init(ctx context.Context, model string, dim int, root string) error {
+// существует) и фиксирует корневую директорию индекса. Новая база - чисто
+// лексический индекс: модель эмбеддингов записывает SetModel, когда
+// появляются первые векторы. Для существующей базы проверяет версию схемы.
+func (s *Store) Init(ctx context.Context, root string) error {
 	exists, err := s.tableExists(ctx, "meta")
 	if err != nil {
 		return err
 	}
-
 	if !exists {
-		return s.createSchema(ctx, model, dim, root)
+		return s.createSchema(ctx, root)
 	}
-
-	if err := s.CheckSchema(ctx); err != nil {
-		return err
-	}
-
-	curModel, curDim, err := s.Meta(ctx)
-	if err != nil {
-		return err
-	}
-	if curModel != "" && (curModel != model || curDim != dim) {
-		return errors.New(i18n.Tf(
-			"index built with model %s (dim %d); delete the database or specify --model %s",
-			"индекс построен моделью %s (dim %d); удалите базу данных или укажите --model %s",
-			curModel, curDim, curModel,
-		))
-	}
-	return nil
+	return s.CheckSchema(ctx)
 }
 
 // CheckSchema проверяет, что версия схемы существующей базы совместима с
@@ -204,7 +185,7 @@ func (s *Store) tableExists(ctx context.Context, name string) (bool, error) {
 // createSchema создаёт таблицы схемы (без vec_chunks - её размерность
 // известна только после первого эмбеддинга, см. ensureVectorsExec) и
 // записывает начальные значения meta.
-func (s *Store) createSchema(ctx context.Context, model string, dim int, root string) error {
+func (s *Store) createSchema(ctx context.Context, root string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -217,8 +198,8 @@ func (s *Store) createSchema(ctx context.Context, model string, dim int, root st
 
 	meta := map[string]string{
 		"schema_version": schemaVersion,
-		"model":          model,
-		"dim":            fmt.Sprintf("%d", dim),
+		"model":          "",
+		"dim":            "0",
 		"root":           root,
 		"indexed_at":     "",
 	}
@@ -244,6 +225,15 @@ func (s *Store) Meta(ctx context.Context) (model string, dim int, err error) {
 		return "", 0, fmt.Errorf(i18n.T("store: parse meta.dim=%q: %w", "store: разбор meta.dim=%q: %w"), dimStr, err)
 	}
 	return model, dim, nil
+}
+
+// SetModel записывает модель эмбеддингов и размерность её векторов. Без
+// этой записи поиск не знает, какой моделью строить эмбеддинг запроса.
+func (s *Store) SetModel(ctx context.Context, model string, dim int) error {
+	if err := s.SetMeta(ctx, "model", model); err != nil {
+		return err
+	}
+	return s.SetMeta(ctx, "dim", strconv.Itoa(dim))
 }
 
 // SetMeta сохраняет произвольный ключ в таблицу meta (upsert).

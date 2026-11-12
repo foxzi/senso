@@ -25,9 +25,6 @@ const (
 	skipBinary = "binary"
 	// skipVanished - файл исчез между сканированием и обработкой.
 	skipVanished = "vanished"
-	// skipNoSchema - схема базы ещё не создана, потому что первый же
-	// файл не дал ни одного чанка (возможно только с --embed).
-	skipNoSchema = "no_schema"
 
 	// failRead - файл не удалось прочитать.
 	failRead = "read_failed"

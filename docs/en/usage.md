@@ -318,9 +318,7 @@ fields:
 Skip reason codes (`skipped_by_code`): `empty` (empty file, or no text
 could be extracted from the document), `too_large` (bigger than
 `--max-file-size`), `binary` (content not recognized as text),
-`vanished` (the file disappeared between scanning and processing),
-`no_schema` (rare: the first file under `--embed` produced no chunk at
-all).
+`vanished` (the file disappeared between scanning and processing).
 
 Exclusion reason codes (`excluded_by_reason`): `hard_excluded` (the
 `.git` or `.senso` service directory), `vendor` (`node_modules`,
@@ -1003,7 +1001,7 @@ message still goes to stderr:
 | Code | Meaning |
 |---|---|
 | `usage` | an argument error detected after flag parsing (for example an unknown `--root`) |
-| `no_index` | the senso database was not found, or it has no schema yet (an `index --embed` run failed before the first embedding) |
+| `no_index` | the senso database was not found, or it has no schema (left by an older senso version whose `index --embed` run failed before the first embedding) |
 | `no_vectors` | the database has no vectors, so `--semantic` and `--hybrid` are impossible |
 | `embed_failed` | failed to get the query embedding from Ollama |
 | `internal` | any other failure: SQLite, I/O, a corrupted database |

@@ -30,8 +30,13 @@ func mustOpenInit(t *testing.T, model string, dim int) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.Init(context.Background(), model, dim, "/root"); err != nil {
+	if err := s.Init(context.Background(), "/root"); err != nil {
 		t.Fatal(err)
+	}
+	if model != "" {
+		if err := s.SetModel(context.Background(), model, dim); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return s
 }
@@ -47,9 +52,12 @@ func TestInitCreatesSchemaAndIsIdempotent(t *testing.T) {
 		t.Fatalf("Meta() = %q, %d; ожидалось bge-m3, %d", model, dim, testDim)
 	}
 
-	// Повторный Init с той же моделью должен пройти без ошибок.
-	if err := s.Init(context.Background(), "bge-m3", testDim, "/root"); err != nil {
-		t.Fatalf("повторный Init с той же моделью вернул ошибку: %v", err)
+	// Повторный Init должен пройти без ошибок и не сбросить модель.
+	if err := s.Init(context.Background(), "/root"); err != nil {
+		t.Fatalf("повторный Init вернул ошибку: %v", err)
+	}
+	if model, _, _ := s.Meta(context.Background()); model != "bge-m3" {
+		t.Errorf("после повторного Init модель = %q, ожидалась bge-m3", model)
 	}
 }
 
@@ -80,15 +88,6 @@ func TestCheckSchemaRejectsOldVersion(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "1") || !strings.Contains(err.Error(), schemaVersion) {
 		t.Fatalf("сообщение об ошибке не содержит обе версии: %v", err)
-	}
-}
-
-func TestInitRejectsDifferentModel(t *testing.T) {
-	s := mustOpenInit(t, "bge-m3", testDim)
-
-	err := s.Init(context.Background(), "other-model", testDim, "/root")
-	if err == nil {
-		t.Fatal("ожидалась ошибка при Init с другой моделью")
 	}
 }
 
@@ -936,7 +935,7 @@ func TestOpenReadOnlyRejectsWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Init(context.Background(), "", 0, "/root"); err != nil {
+	if err := s.Init(context.Background(), "/root"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReplaceFile(context.Background(), "/root/a.txt", 1, 1, "h", chunksOf("alpha"), nil); err != nil {
