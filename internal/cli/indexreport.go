@@ -81,7 +81,8 @@ type indexReport struct {
 	// Unchanged - файлов с неизменившимся содержимым, включая те, у
 	// которых обновились только mtime и размер.
 	Unchanged int `json:"unchanged"`
-	// Deleted - записей, убранных из индекса при --prune.
+	// Deleted - записей, убранных из индекса при --prune: файлы, которых
+	// нет на диске или которые index больше не взял бы.
 	Deleted int `json:"deleted"`
 	// Chunks - сколько чанков записано за этот запуск.
 	Chunks int `json:"chunks"`

@@ -89,7 +89,7 @@ func RunIndex(args []string) error {
 		}
 	}
 
-	if err := ix.finish(dbCtx); err != nil {
+	if err := ix.finish(dbCtx, candidates); err != nil {
 		return err
 	}
 
@@ -202,12 +202,15 @@ type indexer struct {
 	cwd      string
 	fresh    bool
 	backfill bool
+	// unindexable - кандидаты, пропущенные по содержимому (бинарные,
+	// пустые после извлечения текста): их прежние записи убирает prune.
+	unindexable map[string]bool
 }
 
 // newIndexer готовит состояние цикла индексации: клиент эмбеддингов,
 // стратегию нарезки и режим дозаполнения векторов.
 func newIndexer(ctx context.Context, s *store.Store, opts indexOptions, rep *indexReport, root string, fresh bool) (*indexer, error) {
-	ix := &indexer{ctx: ctx, s: s, opts: opts, rep: rep, root: root, fresh: fresh}
+	ix := &indexer{ctx: ctx, s: s, opts: opts, rep: rep, root: root, fresh: fresh, unindexable: make(map[string]bool)}
 	ix.cwd, _ = os.Getwd()
 	// Значение флага уже проверено при разборе аргументов.
 	ix.strategy, _ = chunk.ParseStrategy(opts.Chunker)
@@ -274,6 +277,7 @@ func (ix *indexer) processFile(path string, seq, total int) error {
 	}
 	if skip != "" {
 		ix.rep.addSkip(skip)
+		ix.unindexable[path] = true
 		return nil
 	}
 	curHash := hashContent(content)
@@ -349,17 +353,18 @@ func (ix *indexer) initSchema(dim int) error {
 	return savePrefixes(ix.ctx, ix.s, ix.opts)
 }
 
-// finish завершает индексацию: подчищает удалённые файлы (--prune) и
-// отмечает время и корень. При прерывании индекс остаётся консистентным, но
-// неполным: время индексации не отмечается и удалённые файлы не подчищаются,
-// иначе незатронутые записи выглядели бы как проверенные.
-func (ix *indexer) finish(ctx context.Context) error {
+// finish завершает индексацию: подчищает записи файлов, которых в индексе
+// быть не должно (--prune), и отмечает время и корень. При прерывании индекс
+// остаётся консистентным, но неполным: время индексации не отмечается и
+// лишние записи не подчищаются, иначе незатронутые записи выглядели бы как
+// проверенные.
+func (ix *indexer) finish(ctx context.Context, candidates []string) error {
 	if ix.rep.Interrupted || ix.fresh {
 		return nil
 	}
 	if ix.opts.Prune {
 		var err error
-		ix.rep.Deleted, err = pruneMissing(ctx, ix.s, ix.root)
+		ix.rep.Deleted, err = ix.prune(ctx, candidates)
 		if err != nil {
 			return err
 		}
@@ -380,28 +385,51 @@ func savePrefixes(ctx context.Context, s *store.Store, opts indexOptions) error 
 	return s.SetMeta(ctx, "doc_prefix", opts.DocPrefix)
 }
 
-// pruneMissing удаляет из индекса файлы поддерева root, отсутствующие на
-// диске. Файлы других корней, хранящиеся в той же базе, не затрагиваются.
-func pruneMissing(ctx context.Context, s *store.Store, root string) (int, error) {
-	paths, err := s.ListPaths(ctx, "")
+// prune удаляет из индекса файлы поддерева root, которые index больше не
+// взял бы: отсутствующие на диске, отброшенные правилами отбора (не попали в
+// candidates) и пропущенные по содержимому. Без этого их старые чанки
+// оставались бы в выдаче, а check вечно считал бы индекс устаревшим. Файлы
+// других корней, хранящиеся в той же базе, не затрагиваются.
+func (ix *indexer) prune(ctx context.Context, candidates []string) (int, error) {
+	paths, err := ix.s.ListPaths(ctx, "")
 	if err != nil {
 		return 0, err
 	}
 
-	var missing []string
-	for _, p := range paths {
-		if !prefixInSubtree(p, root) {
-			continue
-		}
-		if _, err := os.Stat(p); os.IsNotExist(err) {
-			missing = append(missing, p)
+	selected := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		selected[c] = true
+	}
+	// При ошибках обхода список кандидатов неполон: файл мог не попасть в
+	// него из-за нечитаемого каталога, а не из-за правил отбора.
+	walkFailed := false
+	for _, f := range ix.rep.Failed {
+		if f.Code == failWalk {
+			walkFailed = true
+			break
 		}
 	}
-	if len(missing) == 0 {
+
+	var stale []string
+	for _, p := range paths {
+		if !prefixInSubtree(p, ix.root) {
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			if os.IsNotExist(err) {
+				stale = append(stale, p)
+			}
+			continue
+		}
+		if ix.unindexable[p] || (!selected[p] && !walkFailed) {
+			stale = append(stale, p)
+		}
+	}
+	if len(stale) == 0 {
 		return 0, nil
 	}
 
-	return s.DeleteFiles(ctx, missing)
+	return ix.s.DeleteFiles(ctx, stale)
 }
 
 // chunkTexts извлекает текст из каждого чанка - embedAll работает с текстом,

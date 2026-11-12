@@ -119,7 +119,7 @@ Flags:
 | `--doc-prefix <s>` | `""` | prefix for documents during indexing (only relevant with `--embed`) |
 | `--max-file-size <mb>` | `10` | maximum file size in MB |
 | `--concurrency <n>` | `4` | number of parallel embedding workers (only relevant with `--embed`) |
-| `--prune` | `true` | remove files from the index that no longer exist on disk |
+| `--prune` | `true` | remove files from the index that no longer exist on disk or are no longer indexable (excluded by the selection rules, emptied, turned binary) |
 | `--ollama <url>` | `$OLLAMA_HOST` or `http://localhost:11434` | Ollama server address (only relevant with `--embed`) |
 | `--quiet` | `false` | do not print progress and summary |
 | `--strict` | `false` | exit with code 1 if at least one file could not be read or parsed (the report is still printed either way) |
@@ -303,7 +303,7 @@ fields:
 | `indexed` | number | new files added to the index |
 | `updated` | number | changed files re-indexed |
 | `unchanged` | number | files whose content did not change (including those where only mtime and size were updated) |
-| `deleted` | number | files removed from the index (`--prune`) |
+| `deleted` | number | files removed from the index (`--prune`): gone from disk or no longer indexable |
 | `chunks` | number | total chunks written |
 | `skipped` | number | total files skipped (see codes below) |
 | `skipped_by_code` | object | skip reason -> number of files; absent if nothing was skipped |

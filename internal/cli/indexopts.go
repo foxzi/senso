@@ -87,7 +87,7 @@ func indexFlagSet(opts *indexOptions) *flag.FlagSet {
 	fs.StringVar(&opts.QueryPrefix, "query-prefix", "", i18n.T("prefix for search queries (only applies with --embed)", "префикс для поисковых запросов (действует только с --embed)"))
 	fs.StringVar(&opts.DocPrefix, "doc-prefix", "", i18n.T("prefix for documents during indexing (only applies with --embed)", "префикс для документов при индексации (действует только с --embed)"))
 	fs.IntVar(&opts.Concurrency, "concurrency", 4, i18n.T("number of parallel embedding workers (only applies with --embed)", "число параллельных обработчиков эмбеддинга (действует только с --embed)"))
-	fs.BoolVar(&opts.Prune, "prune", true, i18n.T("remove files missing from disk from the index", "удалять из индекса файлы, отсутствующие на диске"))
+	fs.BoolVar(&opts.Prune, "prune", true, i18n.T("remove files that are gone from disk or no longer indexable from the index", "удалять из индекса файлы, которых нет на диске или которые больше не индексируются"))
 	fs.StringVar(&opts.Ollama, "ollama", defaultOllama, i18n.T("Ollama server address (only applies with --embed)", "адрес сервера Ollama (действует только с --embed)"))
 	fs.BoolVar(&opts.Strict, "strict", false, i18n.T("exit with a non-zero code if any file failed to be read or parsed", "завершаться ненулевым кодом, если какой-то файл не удалось прочитать или разобрать"))
 	fs.BoolVar(&opts.ReportJSON, "report-json", false, i18n.T("print a machine-readable indexing report to stdout", "вывести машинный отчёт об индексации в stdout"))
