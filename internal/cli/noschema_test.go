@@ -54,3 +54,20 @@ func TestRunCheckWithoutSchemaReportsNoIndex(t *testing.T) {
 		t.Errorf("check с базой без схемы: код %d, ожидался 3", code)
 	}
 }
+
+// Явный --db на несуществующий файл - отсутствие индекса (код 3), а не
+// внутренняя ошибка с сырым сообщением SQLite.
+func TestRunCheckWithMissingDBFileReportsNoIndex(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(dir, "nowhere", "index.db")
+
+	if code := runCheckIn(t, dir, "--quiet", "--db", db, "."); code != 3 {
+		t.Errorf("check с несуществующим --db: код %d, ожидался 3", code)
+	}
+	if _, err := os.Stat(filepath.Dir(db)); !os.IsNotExist(err) {
+		t.Errorf("check создал каталог для несуществующей базы: %v", err)
+	}
+}

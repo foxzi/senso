@@ -249,6 +249,12 @@ func RunCheck(args []string) error {
 	}
 	rep.Database = dbPath
 
+	// Явный --db на несуществующий файл - тоже отсутствие базы: без этой
+	// проверки открытие только для чтения давало бы сырую ошибку SQLite.
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		return finishCheck(opts, missingIndexReport(rep, root, opts))
+	}
+
 	s, err := store.OpenReadOnly(ctx, dbPath)
 	if err != nil {
 		return err
