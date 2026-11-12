@@ -176,6 +176,26 @@ func TestBuildSearchResponseV2FillsRankRefAndTruncation(t *testing.T) {
 	}
 }
 
+// Чанк, целиком поместившийся в окно --snippet, не считается обрезанным,
+// даже если нормализация убрала хвостовые пробелы и переносы строк.
+func TestBuildSearchResponseV2NotTruncatedWhenChunkFits(t *testing.T) {
+	dbPath, filePath := mustBuildShowIndex(t)
+	s := openTestStore(t, dbPath)
+
+	results := []store.Result{
+		{Path: filePath, Seq: 0, Text: "chunk text 0  \nsecond line\n\n", Score: 1.5, StartLine: 1, EndLine: 2},
+	}
+	opts := searchOptions{Query: "chunk", K: 1, Snippet: 300}
+
+	resp, err := buildSearchResponseV2(context.Background(), s, results, opts, nil)
+	if err != nil {
+		t.Fatalf("buildSearchResponseV2 вернул ошибку: %v", err)
+	}
+	if resp.Results[0].Truncated {
+		t.Errorf("Truncated = true для чанка, поместившегося целиком: %q", resp.Results[0].Text)
+	}
+}
+
 func TestBuildSearchResponseV2WarnsOncePerChangedFile(t *testing.T) {
 	dbPath, filePath := mustBuildShowIndex(t)
 	if err := os.WriteFile(filePath, []byte("stub changed on disk"), 0o644); err != nil {

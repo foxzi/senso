@@ -161,6 +161,10 @@ func buildSearchResponseV2(ctx context.Context, s *store.Store, results []store.
 	scoreKind := searchScoreKind(opts)
 	for i, r := range results {
 		snippet := snippetAround(r.Text, opts.Query, opts.Snippet)
+		// Сниппет всегда проходит normalizeLines, поэтому сравнивать его
+		// нужно с нормализованным текстом: разница в хвостовых пробелах
+		// и переносах строк не означает обрезки.
+		full := normalizeLines(r.Text)
 		resp.Results = append(resp.Results, searchResultV2{
 			Ref:        fmt.Sprintf("%s#%d", r.Path, r.Seq),
 			Path:       r.Path,
@@ -171,7 +175,7 @@ func buildSearchResponseV2(ctx context.Context, s *store.Store, results []store.
 			Score:      r.Score,
 			ScoreKind:  scoreKind,
 			Text:       snippet,
-			Truncated:  snippet != r.Text,
+			Truncated:  snippet != full,
 			SourceType: sourceTypeFor(r.Path),
 		})
 	}
