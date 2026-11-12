@@ -1182,7 +1182,7 @@ indexed database or unexpectedly returning a different kind of result.
   Markdown, Go, Python, JS/TS, YAML and JSON; every other file type is still
   split purely by text.
 - Databases created by previous versions of senso are incompatible with
-  the current schema (the schema version is now 4). Any command
+  the current schema (the schema version is now 5). Any command
   (`index`, `search`, `status`, `rm`) refuses to work with such a
   database, exiting with code 1 and a message like "database was created
   by an incompatible senso version (schema 3, need 4), remove the .senso

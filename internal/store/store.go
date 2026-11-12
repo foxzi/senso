@@ -28,7 +28,7 @@ func init() {
 }
 
 // schemaVersion - текущая версия схемы, хранится в meta.schema_version.
-const schemaVersion = "4"
+const schemaVersion = "5"
 
 // Store - соединение с базой данных senso.
 type Store struct {
@@ -113,11 +113,12 @@ CREATE INDEX idx_chunks_file ON chunks(file_id);
 -- идентификаторов (см. stem.Idents). Колонки разделены, чтобы фразовый
 -- поиск по тексту не сбивался вставками из пути и идентификаторов, а вклад
 -- каждой колонки в релевантность можно было взвесить отдельно (bm25Weights).
+-- rowid строки равен chunks.id: удаление по rowid не просматривает таблицу,
+-- в отличие от удаления по неиндексируемой колонке.
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
     body,
     path,
     ids,
-    chunk_id UNINDEXED,
     tokenize="unicode61 remove_diacritics 2",
     prefix='2 3'
 );
@@ -498,7 +499,7 @@ func (s *Store) ReplaceFile(ctx context.Context, path string, mtime, size int64,
 		return err
 	}
 	defer insChunk.Close()
-	insFTS, err := tx.PrepareContext(ctx, `INSERT INTO fts_chunks(body, path, ids, chunk_id) VALUES (?, ?, ?, ?)`)
+	insFTS, err := tx.PrepareContext(ctx, `INSERT INTO fts_chunks(rowid, body, path, ids) VALUES (?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -521,7 +522,7 @@ func (s *Store) ReplaceFile(ctx context.Context, path string, mtime, size int64,
 		if err != nil {
 			return err
 		}
-		if _, err := insFTS.ExecContext(ctx, stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text), chunkID); err != nil {
+		if _, err := insFTS.ExecContext(ctx, chunkID, stem.Text(c.Text), stem.Path(path), stem.Idents(c.Text)); err != nil {
 			return fmt.Errorf(i18n.T("store: insert into fts_chunks seq=%d: %w", "store: вставка в fts_chunks seq=%d: %w"), i, err)
 		}
 		if insVec == nil {
@@ -608,12 +609,11 @@ func (s *Store) Search(ctx context.Context, vector []float32, k int) ([]Result, 
 }
 
 // bm25Weights - веса колонок fts_chunks в порядке их объявления (body,
-// path, ids, chunk_id) для функции bm25. Основной вес у текста чанка;
+// path, ids) для функции bm25. Основной вес у текста чанка;
 // идентификаторы чуть слабее, потому что их слова уже частично попадают в
 // body; путь слабее всех, так как совпадение по пути одинаково для всех
 // чанков файла и само по себе не говорит, какой из них релевантнее.
-// Последний вес нулевой: chunk_id не индексируется.
-const bm25Weights = "1.0, 0.4, 0.8, 0.0"
+const bm25Weights = "1.0, 0.4, 0.8"
 
 // SearchLexical выполняет полнотекстовый поиск по fts_chunks и возвращает до
 // k наиболее релевантных чанков. Query стеммируется через stem.Query, что
@@ -631,7 +631,7 @@ func (s *Store) SearchLexical(ctx context.Context, query string, k int) ([]Resul
 		`SELECT f.path, c.seq, c.text, bm25(fts_chunks, `+bm25Weights+`) AS rank,
 		        c.line_start, c.line_end
 		 FROM fts_chunks
-		 JOIN chunks c ON c.id = fts_chunks.chunk_id
+		 JOIN chunks c ON c.id = fts_chunks.rowid
 		 JOIN files f ON f.id = c.file_id
 		 WHERE fts_chunks MATCH ?
 		 ORDER BY rank, f.path, c.seq
@@ -949,7 +949,7 @@ func deleteChunkIndexes(ctx context.Context, tx *sql.Tx, chunkIDs []int64) error
 			}
 		}
 	}
-	delFTS, err := tx.PrepareContext(ctx, `DELETE FROM fts_chunks WHERE chunk_id=?`)
+	delFTS, err := tx.PrepareContext(ctx, `DELETE FROM fts_chunks WHERE rowid=?`)
 	if err != nil {
 		return err
 	}

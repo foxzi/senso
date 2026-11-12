@@ -130,7 +130,6 @@ CREATE VIRTUAL TABLE fts_chunks USING fts5(
     body,
     path,
     ids,
-    chunk_id UNINDEXED,
     tokenize="unicode61 remove_diacritics 2",
     prefix='2 3'
 );
@@ -142,7 +141,7 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
 );
 ```
 
-- `meta` stores the schema version (currently 4), the embedding model and
+- `meta` stores the schema version (currently 5), the embedding model and
   its dimensionality, the index root, and the last indexing time. An empty
   `model`/`dim=0` is a valid state for a purely lexical index. Databases
   created by an older schema version are incompatible: senso refuses to
@@ -156,7 +155,8 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
   byte offsets during splitting and printed in search output; rows are
   deleted in cascade when a file is removed (`ON DELETE CASCADE`).
 - `fts_chunks` is the virtual FTS5 table used for lexical search, with
-  three indexed columns. `body` holds the stemmed text of the chunk
+  three indexed columns; a row's `rowid` equals `chunks.id`, which links
+  the two tables and keeps deletion by `rowid` cheap. `body` holds the stemmed text of the chunk
   (package `internal/stem`, see above) — that is what `MATCH` actually
   searches. `path` holds the stemmed file path (`stem.Path`) — the same
   string in every chunk of the file, which lets a file be found by a word
@@ -171,8 +171,8 @@ CREATE VIRTUAL TABLE vec_chunks USING vec0(
   before text reaches the index and before a query reaches `MATCH`.
   `prefix='2 3'` enables efficient prefix search starting from 2-3
   characters (queries like `word*`, which are not stemmed). Ranking is
-  done with `bm25(fts_chunks, 1.0, 0.4, 0.8, 0.0)`, with column weights in
-  the order body, path, ids, chunk_id: the chunk text carries the highest
+  done with `bm25(fts_chunks, 1.0, 0.4, 0.8)`, with column weights in
+  the order body, path, ids: the chunk text carries the highest
   weight, identifiers are weighted a bit lower (their words already
   partly overlap with `body`), and the path is weighted lowest, since it
   is the same for every chunk of a file and by itself says nothing about
